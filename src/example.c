@@ -37,13 +37,6 @@ int main() {
         glm_vec4_copy(rainbowColor, engine.activeScene->lights.data[1].color);
 
         BE_MakeShadows(&engine, (glfwGetKey(engine.window, GLFW_KEY_3) != GLFW_PRESS));
-        
-        // glUniform1i(glGetUniformLocation(shader_default.ID, "sampleRadius"), 0);
-        // BE_ShaderActivate(BE_FindShaderPtr(&engine.resources.shaders, "scene1"));
-        // glUniform1i(glGetUniformLocation(FIND_MEMBER_VALUE(Shader, &engine.resources.shaders, "scene1", ID), "sampleRadius"), 2);
-
-        // SET_SHADER_UNIFORM("scene1", &engine.resources.shaders, 1i, "sampleRadius", 2);
-        
         BE_BeginRender(&engine);
         BE_DrawModels(&engine, NULL);
         BE_DrawLights(&engine, NULL);

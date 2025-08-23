@@ -19,7 +19,6 @@
         https://glad.dav1d.de/#profile=core&language=c&specification=gl&loader=on&api=gl%3D4.6&extensions=GL_ARB_bindless_texture
 */
 
-
 #ifndef ENGINE_H
 #define ENGINE_H
 
@@ -34,17 +33,6 @@
 #include <string.h>
 
 #include "engine_default.h"
-
-#define FIND_PTR(vecPtr, type, targetName) ({ \
-    void* result = NULL; \
-    for (size_t i = 0; i < (vecPtr)->size; i++) { \
-        if (strcmp((vecPtr)->data[i].name, targetName) == 0) { \
-            result = &(vecPtr)->data[i]; \
-            break; \
-        } \
-    } \
-    result; \
-})
 
 void BE_MatrixMakeModel(vec3 translation, vec3 rotation, vec3 scale, mat4 dest);
 void BE_MatrixMakeBillboard(vec3 position, mat4 view, vec3 scale, mat4 dest);
