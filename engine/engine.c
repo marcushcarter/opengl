@@ -222,13 +222,14 @@ void BE_VertexVectorCopy(BE_Vertex* vertices, size_t count, BE_VertexVector* out
 // VAO
 // ==============================
 
-BE_VAO BE_VAOInit() {
+BE_VAO BE_VAOInit(const char* name) {
     BE_VAO vao;
+    vao.name = strdup(name ? name : "");
     glGenVertexArrays(1, &vao.ID);
     return vao;
 }
 
-BE_VAO BE_VAOInitQuad() {
+BE_VAO BE_VAOInitQuad(const char* name) {
     
     GLfloat vertices[] = {
         // positions   // texCoords
@@ -241,7 +242,7 @@ BE_VAO BE_VAOInitQuad() {
         1.0f,  1.0f,   1.0f, 1.0f   // top-right
     };
     
-    BE_VAO vao = BE_VAOInit();
+    BE_VAO vao = BE_VAOInit("quad");
     BE_VAOBind(&vao);
     BE_VBO vbo = BE_VBOInitFromData(vertices, sizeof(vertices));
     BE_LinkVertexAttribToVBO(&vbo, 0, 2, GL_FLOAT, 4 * sizeof(float), (void*)0);
@@ -252,7 +253,7 @@ BE_VAO BE_VAOInitQuad() {
     return vao;
 }
 
-BE_VAO BE_VAOInitSprite() {
+BE_VAO BE_VAOInitSprite(const char* name) {
     
     GLfloat vertices[] = {
         // First triangle
@@ -266,7 +267,7 @@ BE_VAO BE_VAOInitSprite() {
         -0.5f,  0.5f, 0.0f, 1.0f   // top-left
     };
     
-    BE_VAO vao = BE_VAOInit();
+    BE_VAO vao = BE_VAOInit("sprite");
     BE_VAOBind(&vao);
     BE_VBO vbo = BE_VBOInitFromData(vertices, sizeof(vertices));
     BE_LinkVertexAttribToVBO(&vbo, 0, 2, GL_FLOAT, 4 * sizeof(float), (void*)0);
@@ -277,7 +278,7 @@ BE_VAO BE_VAOInitSprite() {
     return vao;
 }
 
-BE_VAO BE_VAOInitBillboardQuad() {
+BE_VAO BE_VAOInitBillboardQuad(const char* name) {
     
     GLfloat vertices[] = {
         // positions   // texCoords
@@ -290,7 +291,7 @@ BE_VAO BE_VAOInitBillboardQuad() {
         1.0f,  1.0f,   1.0f, 1.0f   // top-right
     };
     
-    BE_VAO vao = BE_VAOInit();
+    BE_VAO vao = BE_VAOInit("billboard");
     BE_VAOBind(&vao);
     BE_VBO vbo = BE_VBOInitFromData(vertices, sizeof(vertices));
     BE_LinkVertexAttribToVBO(&vbo, 0, 3, GL_FLOAT, 5 * sizeof(float), (void*)0);
@@ -317,6 +318,36 @@ void BE_VAOUnbind() {
 void BE_VAODelete(BE_VAO* vao) {
     glBindVertexArray(0);
     glDeleteVertexArrays(1, &vao->ID);
+}
+
+#define INITIAL_VAO_CAPACITY 16
+
+void BE_VAOVectorInit(BE_VAOVector* vec) {
+    vec->data = (BE_VAO*)malloc(sizeof(BE_VAO) * INITIAL_VAO_CAPACITY);
+    vec->size = 0;
+    vec->capacity = INITIAL_VAO_CAPACITY;
+}
+
+void BE_VAOVectorPush(BE_VAOVector* vec, BE_VAO value) {
+    if (vec->size >= vec->capacity) {
+        vec->capacity *= 2;
+        vec->data = (BE_VAO*)realloc(vec->data, sizeof(BE_VAO) * vec->capacity);
+    }
+    vec->data[vec->size++] = value;
+}
+
+void BE_VAOVectorFree(BE_VAOVector* vec) {
+    free(vec->data);
+    vec->data = NULL;
+    vec->size = 0;
+    vec->capacity = 0;
+}
+
+void BE_VAOVectorCopy(BE_VAO* vaos, size_t count, BE_VAOVector* outVec) {
+    BE_VAOVectorInit(outVec);
+    for (size_t i = 0; i < count; i++) {
+        BE_VAOVectorPush(outVec, vaos[i]);
+    }
 }
 
 // ==============================
@@ -666,7 +697,7 @@ BE_FBO BE_FBOInit(int width, int height) {
          1.0f,  1.0f,   1.0f, 1.0f   // top-right
     };
 
-    fb.vao = BE_VAOInit();
+    fb.vao = BE_VAOInit(NULL);
     BE_VAOBind(&fb.vao);
     fb.vbo = BE_VBOInitFromData(vertices, sizeof(vertices));
     BE_LinkVertexAttribToVBO(&fb.vbo, 0, 2, GL_FLOAT, 4 * sizeof(float), (void*)0);
@@ -1133,7 +1164,7 @@ BE_Mesh BE_MeshInitFromVertex(const char* name, BE_VertexVector vertices, BE_GLu
     mesh.indices = indices;
     mesh.textures = textures;
 
-    BE_VAO VAO1 = BE_VAOInit();
+    BE_VAO VAO1 = BE_VAOInit(NULL);
     BE_VAOBind(&VAO1);
     BE_VBO VBO1 = BE_VBOInitFromVector(&vertices);
     BE_EBO EBO1 = BE_EBOInitFromVector(&indices);
@@ -2204,7 +2235,7 @@ void BE_SpriteVectorInit(BE_SpriteVector* vec) {
     vec->size = 0;
     vec->capacity = INITIAL_SPRITE_CAPACITY;
 
-    vec->vao = BE_VAOInitSprite();
+    vec->vao = BE_VAOInitSprite(NULL);
 }
 
 void BE_SpriteVectorPush(BE_SpriteVector* vec, BE_Sprite value) {
@@ -2349,6 +2380,7 @@ BE_Source BE_SourceInit(const char* name, vec3 position, bool spatial) {
     src.looping = false;
     src.spatial = spatial;
     src.channel = NULL;
+    src.reverbDSP = NULL;
     return src;
 }
 
@@ -2377,6 +2409,28 @@ void BE_SourcePlaySound(BE_AudioEngine* engine, BE_Source* src, BE_Sound* sound)
 
 void BE_SourceStop(BE_Source* src){
     if(src->channel) FMOD_Channel_Stop(src->channel);
+}
+
+void BE_SourcePause(BE_Source* src, bool pause) {
+    if (!src) return;
+
+    FMOD_BOOL current;
+    FMOD_Channel_GetPaused(src->channel, &current);
+
+    if (current != pause) {
+        FMOD_Channel_SetPaused(src->channel, pause);
+    }
+
+}
+
+void BE_SourceSetSeek(BE_Source* src, float seconds) {
+    FMOD_Channel_SetPosition(src->channel, seconds*1000.f, FMOD_TIMEUNIT_MS);
+}
+
+float BE_SourceGetSeek(BE_Source* src) {
+    unsigned int posMS = 0;
+    FMOD_Channel_GetPosition(src->channel, &posMS, FMOD_TIMEUNIT_MS);
+    return posMS*1000.f;
 }
 
 void BE_SourceSetPosition(BE_Source* src, vec3 position){
@@ -2408,6 +2462,34 @@ void BE_SourceSetLooping(BE_Source* src, bool looping) {
         mode = looping ? FMOD_LOOP_NORMAL : FMOD_LOOP_OFF;
         FMOD_Channel_SetMode(src->channel, mode);
     }
+}
+
+void BE_SourceSetReverb(BE_Source* src, float decay, float mix) {
+    if (!src || !src->channel) return;
+
+    if (!src->reverbDSP) {
+        FMOD_SYSTEM* system = NULL;
+        FMOD_Channel_GetSystemObject(src->channel, &system);
+        if (!system) return;
+
+        FMOD_DSP* dsp = NULL;
+        FMOD_System_CreateDSPByType(system, FMOD_DSP_TYPE_SFXREVERB, &dsp);
+        if (!dsp) return;
+
+        FMOD_Channel_AddDSP(src->channel, 0, dsp);
+        src->reverbDSP = dsp;
+    }
+
+    FMOD_DSP_SetParameterFloat(src->reverbDSP, FMOD_DSP_SFXREVERB_DECAYTIME, decay);
+    FMOD_DSP_SetParameterFloat(src->reverbDSP, FMOD_DSP_SFXREVERB_EARLYLATEMIX, mix);
+}
+
+void BE_SourceRemoveReverb(BE_Source* src) {
+    if (!src || !src->channel || !src->reverbDSP) return;
+    FMOD_Channel_RemoveDSP(src->channel,src->reverbDSP);
+    FMOD_DSP_Release(src->reverbDSP);
+    src->reverbDSP = NULL;
+
 }
 
 void BE_SourceSetListener(BE_AudioEngine* engine, vec3 position, vec3 direction, vec3 velocity) {
@@ -2538,6 +2620,8 @@ void BE_SceneVectorCopy(BE_Scene* scenes, size_t count, BE_SceneVector* outVec) 
 // Engine
 // ==============================
 
+BE_Engine* g_engine = NULL;
+
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     BE_Engine* engine = (BE_Engine*)glfwGetWindowUserPointer(window);
     engine->width = width;
@@ -2552,6 +2636,8 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 BE_Engine BE_EngineStart(int width, int height, const char* name) {
     
     BE_Engine engine;
+    BE_Engine* p_engine;
+    BE_BindEngine(&engine);
     engine.width = width;
     engine.height = height;
     engine.title = strdup(name);
@@ -2597,15 +2683,20 @@ BE_Engine BE_EngineStart(int width, int height, const char* name) {
     
     BE_SceneVectorInit(&engine.scenes);
     BE_AudioEngineInit(&engine.audio);
-    BE_SceneNew(&engine, "scene1");
+    BE_SceneNew("scene1");
     engine.activeScene = BE_FindScenePtr(&engine.scenes, "scene1");
     
     BE_TextureVectorInit(&engine.resources.textures);
     BE_MeshVectorInit(&engine.resources.meshes);
     BE_SoundVectorInit(&engine.resources.sounds);
     BE_ShaderVectorInit(&engine.resources.shaders);
+    BE_VAOVectorInit(&engine.resources.vaos);
+
+    BE_VAOVectorPush(&engine.resources.vaos, BE_VAOInitBillboardQuad("billboard"));
+    BE_VAOVectorPush(&engine.resources.vaos, BE_VAOInitQuad("quad"));
+
     
-    BE_SceneAddCamera(&engine, "camera1", (vec3){-1.93f, 0.73f, -1.75f}, (vec3){0.67f, -0.12f, 0.73f}, 1, 1, 45.0f, 0.1f, 100.0f);
+    BE_SceneAddCamera("camera1", (vec3){-1.93f, 0.73f, -1.75f}, (vec3){0.67f, -0.12f, 0.73f}, 1, 1, 45.0f, 0.1f, 100.0f);
     engine.activeCamera = BE_FindCameraPtr(&engine.activeScene->cameras, "camera1");
 
     // DEFAULT RESOURCES
@@ -2617,6 +2708,8 @@ BE_Engine BE_EngineStart(int width, int height, const char* name) {
     engine.resources.defaultCubeMesh = BE_LoadOBJFromString("cube", BE_DefaultCubeOBJ);
     engine.resources.defaultCameraMesh = BE_LoadOBJFromString("camera", BE_DefaultCameraOBJ);
 
+    BE_UnbindEngine();
+
     return engine;
 }
 
@@ -2625,91 +2718,99 @@ void BE_EngineClose(BE_Engine* engine) {
     glfwTerminate();
 }
 
+void BE_BindEngine(BE_Engine* engine) {
+    g_engine = engine;
+}
+
+void BE_UnbindEngine() {
+    g_engine = NULL;
+}
+
 // ==============================
 // Scene Additions
 // ==============================
 
-void BE_SceneNew(BE_Engine* engine, const char* name) {
-    BE_SceneVectorPush(&engine->scenes, BE_SceneInit(name));
+void BE_SceneNew(const char* name) {
+    BE_SceneVectorPush(&g_engine->scenes, BE_SceneInit(name));
 }
 
-void BE_LoadTexture(BE_Engine* engine, const char* name, const char* imageFile, const char* texType, GLenum slot) {
-    BE_TextureVectorPush(&engine->resources.textures, BE_TextureInit(name, imageFile, texType, slot));
+void BE_LoadTexture(const char* name, const char* imageFile, const char* texType, GLenum slot) {
+    BE_TextureVectorPush(&g_engine->resources.textures, BE_TextureInit(name, imageFile, texType, slot));
 }
 
-void BE_LoadMesh(BE_Engine* engine, const char* name, const char* objPath) {
-    BE_MeshVectorPush(&engine->resources.meshes, BE_LoadOBJToMesh(name, objPath));
+void BE_LoadMesh(const char* name, const char* objPath) {
+    BE_MeshVectorPush(&g_engine->resources.meshes, BE_LoadOBJToMesh(name, objPath));
 }
 
-void BE_LoadSound(BE_Engine* engine, const char* name, const char* path, bool spatial, float min, float max) {
-    BE_SoundVectorPush(&engine->resources.sounds, BE_SoundLoad(&engine->audio, path, name, spatial, min, max));
+void BE_LoadSound(const char* name, const char* path, bool spatial, float min, float max) {
+    BE_SoundVectorPush(&g_engine->resources.sounds, BE_SoundLoad(&g_engine->audio, path, name, spatial, min, max));
 }
 
-void BE_LoadShader(BE_Engine* engine, const char* name, const char* vertexFile, const char* fragmentFile, const char* geometryFile, const char* computeFile) {
-    BE_ShaderVectorPush(&engine->resources.shaders, BE_ShaderInit(name, vertexFile, fragmentFile, geometryFile, computeFile));
+void BE_LoadShader(const char* name, const char* vertexFile, const char* fragmentFile, const char* geometryFile, const char* computeFile) {
+    BE_ShaderVectorPush(&g_engine->resources.shaders, BE_ShaderInit(name, vertexFile, fragmentFile, geometryFile, computeFile));
 }
 
-void BE_SceneAddModel(BE_Engine* engine, const char* name, const char* meshName, vec3 position, vec3 rotation, vec3 scale) {
-    BE_ModelVectorPush(&engine->activeScene->models, BE_ModelInit(name, BE_FindMeshPtr(&engine->resources.meshes, meshName), BE_TransformInit(position, rotation, scale)));
+void BE_SceneAddModel(const char* name, const char* meshName, vec3 position, vec3 rotation, vec3 scale) {
+    BE_ModelVectorPush(&g_engine->activeScene->models, BE_ModelInit(name, BE_FindMeshPtr(&g_engine->resources.meshes, meshName), BE_TransformInit(position, rotation, scale)));
 }
 
-void BE_SceneAddLight(BE_Engine* engine, const char* name, int type, vec3 position, vec3 direction, vec4 color, float specular, float a, float b, float innerCone, float outerCone) {
-    BE_LightVectorPush(&engine->activeScene->lights, BE_LightInit(name, type, position, direction, color, specular, a, b, innerCone, outerCone));
+void BE_SceneAddLight(const char* name, int type, vec3 position, vec3 direction, vec4 color, float specular, float a, float b, float innerCone, float outerCone) {
+    BE_LightVectorPush(&g_engine->activeScene->lights, BE_LightInit(name, type, position, direction, color, specular, a, b, innerCone, outerCone));
 }
 
-void BE_SceneAddCamera(BE_Engine* engine, const char* name, vec3 position, vec3 direction, int width, int height, float fov, float nearPlane, float farPlane) {
-    BE_CameraVectorPush(&engine->activeScene->cameras, BE_CameraInit(name, width, height, fov, nearPlane, farPlane, position, direction));
+void BE_SceneAddCamera(const char* name, vec3 position, vec3 direction, int width, int height, float fov, float nearPlane, float farPlane) {
+    BE_CameraVectorPush(&g_engine->activeScene->cameras, BE_CameraInit(name, width, height, fov, nearPlane, farPlane, position, direction));
 }
 
-void BE_SceneAddSprite(BE_Engine* engine, const char* name, const char* textureName, vec3 position, vec2 scale, vec3 color, float rotation) {
-    BE_SpriteVectorPush(&engine->activeScene->sprites, BE_SpriteInit(name, BE_FindTexturePtr(&engine->resources.textures, textureName), position, scale, color, rotation));
+void BE_SceneAddSprite(const char* name, const char* textureName, vec3 position, vec2 scale, vec3 color, float rotation) {
+    BE_SpriteVectorPush(&g_engine->activeScene->sprites, BE_SpriteInit(name, BE_FindTexturePtr(&g_engine->resources.textures, textureName), position, scale, color, rotation));
 }
 
-void BE_SceneAddSource(BE_Engine* engine, const char* name, vec3 position, bool spatial) {
-    BE_SourceVectorPush(&engine->activeScene->sources, BE_SourceInit(name, position, spatial));
+void BE_SceneAddSource(const char* name, vec3 position, bool spatial) {
+    BE_SourceVectorPush(&g_engine->activeScene->sources, BE_SourceInit(name, position, spatial));
 }
 
 // ==============================
 // Scene Drawing
 // ==============================
 
-void BE_BeginFrame(BE_Engine* engine) {
-    BE_UpdateFrameTimeInfo(&engine->timer);
+void BE_BeginFrame() {
+    BE_UpdateFrameTimeInfo(&g_engine->timer);
     
-    glfwSetWindowUserPointer(engine->window, engine);
-    glfwSetFramebufferSizeCallback(engine->window, framebuffer_size_callback);
+    glfwSetWindowUserPointer(g_engine->window, g_engine);
+    glfwSetFramebufferSizeCallback(g_engine->window, framebuffer_size_callback);
 
     glfwPollEvents();
-    BE_SourceSetListener(&engine->audio, engine->activeCamera->position, engine->activeCamera->direction, (vec3){0,0,0});
-    BE_AudioEngineUpdate(&engine->audio);
+    BE_AudioEngineUpdate(&g_engine->audio);
 }
 
-void BE_MakeShadows(BE_Engine* engine, bool active) {
-    
-    BE_CameraVectorUpdateMatrix(&engine->activeScene->cameras, engine->width, engine->height);
-    BE_LightVectorUpdateMatrix(&engine->activeScene->lights);
-    BE_LightVectorUpdateMultiMaps(&engine->activeScene->lights, &engine->activeScene->models, &engine->resources.defaultDepthShader, active);
-        
+void BE_MakeShadows(bool active) {
+    BE_CameraVectorUpdateMatrix(&g_engine->activeScene->cameras, g_engine->width, g_engine->height);
+    BE_LightVectorUpdateMatrix(&g_engine->activeScene->lights);
+    BE_LightVectorUpdateMultiMaps(&g_engine->activeScene->lights, &g_engine->activeScene->models, &g_engine->resources.defaultDepthShader, active);        
 }
 
-void BE_BeginRender(BE_Engine* engine) {
-    glViewport(0, 0, engine->width, engine->height);
+void BE_BeginRender() {
+    glViewport(0, 0, g_engine->width, g_engine->height);
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
-void BE_DrawModels(BE_Engine* engine, const char* shaderName) {
+void BE_DrawModels(const char* shaderName) {
 
     BE_Shader* shader = {0};
-    if (shaderName == NULL) {
-        // MSG_ERROR(shaderName, 1, "could not find shader");
-        shader = &engine->resources.default3DShader;
+    if (!shaderName) {
+        shader = &g_engine->resources.default3DShader;
     } else {
-        BE_FindShaderPtr(&engine->resources.shaders, shaderName);
+        BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
+        if (!shader) {
+            MSG_ERROR(shaderName, 1, "could not find shader");
+            shader = &g_engine->resources.default3DShader;
+        }
     }
 
-    BE_LightVectorUpload(&engine->activeScene->lights, shader);
-    BE_CameraMatrixUploadPersp(engine->activeCamera, shader, "camMatrix");
+    BE_LightVectorUpload(&g_engine->activeScene->lights, shader);
+    BE_CameraMatrixUploadPersp(g_engine->activeCamera, shader, "camMatrix");
 
     BE_ShaderActivate(shader);
 
@@ -2719,25 +2820,28 @@ void BE_DrawModels(BE_Engine* engine, const char* shaderName) {
     glEnable(GL_BLEND);
 
     mat4 modelMatrix;
-    for (size_t i = 0; i < engine->activeScene->models.size; i++) {
-        BE_Model* model = &engine->activeScene->models.data[i];
+    for (size_t i = 0; i < g_engine->activeScene->models.size; i++) {
+        BE_Model* model = &g_engine->activeScene->models.data[i];
         BE_MatrixMakeModel(model->transform.position, model->transform.rotation, model->transform.scale, modelMatrix);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)modelMatrix);
         BE_MeshDraw(model->mesh, shader);
     }
 }
 
-void BE_DrawLights(BE_Engine* engine, const char* shaderName) {
+void BE_DrawLights(const char* shaderName) {
 
     BE_Shader* shader = {0};
     if (shaderName == NULL) {
-        // MSG_ERROR(shaderName, 1, "could not find shader");
-        shader = &engine->resources.defaultColorShader;
+        shader = &g_engine->resources.defaultColorShader;
     } else {
-        BE_FindShaderPtr(&engine->resources.shaders, shaderName);
+        BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
+        if (!shader) {
+            MSG_ERROR(shaderName, 1, "could not find shader");
+            shader = &g_engine->resources.defaultColorShader;
+        }
     }
 
-    BE_CameraMatrixUploadPersp(engine->activeCamera, shader, "camMatrix");
+    BE_CameraMatrixUploadPersp(g_engine->activeCamera, shader, "camMatrix");
 
     BE_ShaderActivate(shader);
 
@@ -2749,8 +2853,8 @@ void BE_DrawLights(BE_Engine* engine, const char* shaderName) {
     vec3 scale = { 0.1f, 0.1f, 0.1f };
     mat4 model;
 
-    for (size_t i = 0; i < engine->activeScene->lights.size; i++) {
-        BE_Light* light = &engine->activeScene->lights.data[i];
+    for (size_t i = 0; i < g_engine->activeScene->lights.size; i++) {
+        BE_Light* light = &g_engine->activeScene->lights.data[i];
         
         switch (light->type) {
             case LIGHT_DIRECT:
@@ -2769,22 +2873,25 @@ void BE_DrawLights(BE_Engine* engine, const char* shaderName) {
         
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
         glUniform3fv(glGetUniformLocation(shader->ID, "color"), 1, (float*)light->color);
-        BE_VAOBind(&engine->resources.defaultCubeMesh.vao);
-        glDrawElements(GL_TRIANGLES, engine->resources.defaultCubeMesh.indices.size, GL_UNSIGNED_INT, 0);
+        BE_VAOBind(&g_engine->resources.defaultCubeMesh.vao);
+        glDrawElements(GL_TRIANGLES, g_engine->resources.defaultCubeMesh.indices.size, GL_UNSIGNED_INT, 0);
     }
 }
 
-void BE_DrawCameras(BE_Engine* engine, const char* shaderName) {
+void BE_DrawCameras(const char* shaderName) {
 
     BE_Shader* shader = {0};
     if (shaderName == NULL) {
-        // MSG_ERROR(shaderName, 1, "could not find shader");
-        shader = &engine->resources.defaultColorShader;
+        shader = &g_engine->resources.defaultColorShader;
     } else {
-        BE_FindShaderPtr(&engine->resources.shaders, shaderName);
+        BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
+        if (!shader) {
+            MSG_ERROR(shaderName, 1, "could not find shader");
+            shader = &g_engine->resources.defaultColorShader;
+        }
     }
     
-    BE_CameraMatrixUploadPersp(engine->activeCamera, shader, "camMatrix");
+    BE_CameraMatrixUploadPersp(g_engine->activeCamera, shader, "camMatrix");
 
     BE_ShaderActivate(shader);
 
@@ -2798,30 +2905,33 @@ void BE_DrawCameras(BE_Engine* engine, const char* shaderName) {
     mat4 model;
     vec3 ori;
 
-    for (size_t i = 0; i < engine->activeScene->cameras.size; i++) {
-        BE_Camera* camera = &engine->activeScene->cameras.data[i];
+    for (size_t i = 0; i < g_engine->activeScene->cameras.size; i++) {
+        BE_Camera* camera = &g_engine->activeScene->cameras.data[i];
 
-        if (camera == engine->activeCamera) continue;
+        if (camera == g_engine->activeCamera) continue;
         
         BE_OritentationToEuler(camera->direction, ori);
 
         BE_MatrixMakeModel(camera->position, ori, (vec3){0.25f * camera->width/1000 * camera->fov/45, 0.25f * camera->height/1000, 0.2f * camera->zoom}, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
-        BE_MeshDraw(&engine->resources.defaultCameraMesh, shader);
+        BE_MeshDraw(&g_engine->resources.defaultCameraMesh, shader);
     }
 }
 
-void BE_DrawSprites(BE_Engine* engine, const char* shaderName) {
+void BE_DrawSprites(const char* shaderName) {
     
     BE_Shader* shader = {0};
     if (shaderName == NULL) {
-        // MSG_ERROR(shaderName, 1, "could not find shader");
-        shader = &engine->resources.defaultSpriteShader;
+        shader = &g_engine->resources.defaultSpriteShader;
     } else {
-        BE_FindShaderPtr(&engine->resources.shaders, shaderName);
+        BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
+        if (!shader) {
+            MSG_ERROR(shaderName, 1, "could not find shader");
+            shader = &g_engine->resources.defaultSpriteShader;
+        }
     }
     
-    BE_CameraMatrixUploadOrtho(engine->activeCamera, shader, "camMatrix");
+    BE_CameraMatrixUploadOrtho(g_engine->activeCamera, shader, "camMatrix");
 
     BE_ShaderActivate(shader);
     
@@ -2832,8 +2942,8 @@ void BE_DrawSprites(BE_Engine* engine, const char* shaderName) {
 
     mat4 model;
 
-    for (size_t i = 0; i < engine->activeScene->sprites.size; i++) {
-        BE_Sprite* sprite = &engine->activeScene->sprites.data[i];
+    for (size_t i = 0; i < g_engine->activeScene->sprites.size; i++) {
+        BE_Sprite* sprite = &g_engine->activeScene->sprites.data[i];
 
         glm_mat4_identity(model);
         glm_translate(model, sprite->position);
@@ -2847,24 +2957,25 @@ void BE_DrawSprites(BE_Engine* engine, const char* shaderName) {
         BE_TextureBind(sprite->texture);
         BE_TextureSetUniformUnit(shader, "spriteTexture", 0);
 
-        BE_VAOBind(&engine->activeScene->sprites.vao);
+        BE_VAOBind(&g_engine->activeScene->sprites.vao);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 }
 
-void BE_DrawSources(BE_Engine* engine, const char* shaderName) {
+void BE_DrawSources(const char* shaderName) {
     
     BE_Shader* shader = {0};
     if (shaderName == NULL) {
-        shader = &engine->resources.defaultColorShader;
+        shader = &g_engine->resources.defaultColorShader;
     } else {
-        BE_FindShaderPtr(&engine->resources.shaders, shaderName);
+        BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
         if (!shader) {
-            shader = &engine->resources.defaultColorShader;
+            MSG_ERROR(shaderName, 1, "could not find shader");
+            shader = &g_engine->resources.defaultColorShader;
         }
     }
     
-    BE_CameraMatrixUploadPersp(engine->activeCamera, shader, "camMatrix");
+    BE_CameraMatrixUploadPersp(g_engine->activeCamera, shader, "camMatrix");
 
     BE_ShaderActivate(shader);
 
@@ -2876,35 +2987,82 @@ void BE_DrawSources(BE_Engine* engine, const char* shaderName) {
     glEnable(GL_BLEND);
 
     mat4 model;
-    for (size_t i = 0; i < engine->activeScene->sources.size; i++) {
-        BE_Source* source = &engine->activeScene->sources.data[i];
+    for (size_t i = 0; i < g_engine->activeScene->sources.size; i++) {
+        BE_Source* source = &g_engine->activeScene->sources.data[i];
 
         BE_MatrixMakeModel(source->position, (vec3){0,0,0}, (vec3){0.1f,0.1f,0.1f}, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
-        BE_MeshDraw(&engine->resources.defaultCubeMesh, shader);
+        BE_MeshDraw(&g_engine->resources.defaultCubeMesh, shader);
     }
 }
 
-void BE_DrawScene(BE_Engine* engine, bool editor) {
+void BE_DrawScene(bool editor) {
     
-    BE_DrawModels(engine, NULL);
-    BE_DrawSprites(engine, NULL);
+    BE_DrawModels( NULL);
+    BE_DrawSprites(NULL);
 
     if (editor) {
-        BE_DrawLights(engine, NULL);
-        BE_DrawCameras(engine, NULL);
-        BE_DrawSources(engine, NULL);
+        BE_DrawLights(NULL);
+        BE_DrawCameras(NULL);
+        BE_DrawSources(NULL);
     }
 }
 
-void BE_EndFrame(BE_Engine* engine) {
-    glfwSwapBuffers(engine->window);
+void BE_EndFrame() {
+    glfwSwapBuffers(g_engine->window);
 }
 
 // ==============================
-// Scene Audio
+// Audio
 // ==============================
 
-void BE_ScenePlaySound(BE_Engine* engine, const char* sourceName, const char* soundName) {
-    BE_SourcePlaySound(&engine->audio, BE_FindSourcePtr(&engine->activeScene->sources, sourceName), BE_FindSoundPtr(&engine->resources.sounds, soundName));
+void BE_PlaySound(const char* sourceName, const char* soundName) {
+    BE_SourcePlaySound(&g_engine->audio, BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), BE_FindSoundPtr(&g_engine->resources.sounds, soundName));
+}
+
+void BE_StopSound(const char* sourceName) {
+    BE_SourceStop(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName));
+}
+
+void BE_PauseSound(const char* sourceName, bool pause) {
+    BE_SourcePause(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), pause);
+}
+
+void BE_SetSoundLooping(const char* sourceName, bool looping) {
+    BE_SourceSetLooping(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), looping);
+}
+
+void BE_SetSoundSeek(const char* sourceName, float seconds) {
+    BE_SourceSetSeek(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), seconds);
+}
+
+float BE_GetSoundSeek(const char* sourceName) {
+    return BE_SourceGetSeek(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName));
+}
+
+void BE_SetSoundPosition(const char* sourceName, vec3 position) {
+    BE_SourceSetPosition(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), position);
+}
+
+void BE_SetListenerPosition(vec3 position, vec3 direction, vec3 velocity) {
+    if (!position) glm_vec3_copy((vec3){0,0,0}, position);
+    if (!direction) glm_vec3_copy((vec3){0,0,0}, direction);
+    if (!velocity) glm_vec3_copy((vec3){0,0,0}, velocity);
+    BE_SourceSetListener(&g_engine->audio, position, direction, velocity);
+}
+
+void BE_SetSoundVolume(const char* sourceName, float volume) {
+    BE_SourceSetGain(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), volume);
+}
+
+void BE_SetSoundPitch(const char* sourceName, float pitch) {
+    BE_SourceSetPitch(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), pitch);
+}
+
+void BE_SetSoundReverb(const char* sourceName, float decay, float mix) {
+    BE_SourceSetReverb(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), decay, mix);
+}
+
+void BE_RemoveSoundReverb(const char* sourceName) {
+    BE_SourceRemoveReverb(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName));
 }

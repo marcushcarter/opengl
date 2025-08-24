@@ -142,17 +142,29 @@ void BE_VertexVectorFree(BE_VertexVector* vec);
 void BE_VertexVectorCopy(BE_Vertex* vertices, size_t count, BE_VertexVector* outVec);
 
 typedef struct {
+    char* name;
     GLuint ID;
 } BE_VAO;
 
-BE_VAO BE_VAOInit();
-BE_VAO BE_VAOInitQuad();
-BE_VAO BE_VAOInitSprite();
-BE_VAO BE_VAOInitBillboardQuad();
+typedef struct {
+    BE_VAO* data;
+    size_t size;
+    size_t capacity;
+} BE_VAOVector;
+
+BE_VAO BE_VAOInit(const char* name);
+BE_VAO BE_VAOInitQuad(const char* name);
+BE_VAO BE_VAOInitSprite(const char* name);
+BE_VAO BE_VAOInitBillboardQuad(const char* name);
 void BE_VAOBind(BE_VAO* vao);
 void BE_VAODrawQuad(BE_VAO* vao);
 void BE_VAOUnbind();
 void BE_VAODelete(BE_VAO* vao);
+
+void BE_VAOVectorInit(BE_VAOVector* vec);
+void BE_VAOVectorPush(BE_VAOVector* vec, BE_VAO value);
+void BE_VAOVectorFree(BE_VAOVector* vec);
+void BE_VAOVectorCopy(BE_VAO* vaos, size_t count, BE_VAOVector* outVec);
 
 typedef struct {
     GLuint ID;
@@ -538,6 +550,7 @@ typedef struct {
     bool looping;
     bool spatial;
     FMOD_CHANNEL* channel;
+    FMOD_DSP* reverbDSP;
 } BE_Source;
 
 typedef struct {
@@ -550,11 +563,16 @@ BE_Source BE_SourceInit(const char* name, vec3 position, bool spatial);
 
 void BE_SourcePlaySound(BE_AudioEngine* engine, BE_Source* src, BE_Sound* sound);
 void BE_SourceStop(BE_Source* src);
+void BE_SourcePause(BE_Source* src, bool pause);
 
+void BE_SourceSetSeek(BE_Source* src, float seconds);
+float BE_SourceGetSeek(BE_Source* src);
 void BE_SourceSetPosition(BE_Source* src, vec3 position);
 void BE_SourceSetGain(BE_Source* src, float gain);
 void BE_SourceSetPitch(BE_Source* src, float pitch);
 void BE_SourceSetLooping(BE_Source* src, bool looping);
+void BE_SourceSetReverb(BE_Source* src, float decay, float mix);
+void BE_SourceRemoveReverb(BE_Source* src);
 void BE_SourceSetListener(BE_AudioEngine* engine, vec3 position, vec3 direction, vec3 velocity);
 
 void BE_SourceVectorInit(BE_SourceVector* vec);
@@ -577,6 +595,7 @@ typedef struct {
     BE_MeshVector meshes;
     BE_SoundVector sounds;
     BE_ShaderVector shaders;
+    BE_VAOVector vaos;
 
     BE_Shader default3DShader;
     BE_Shader defaultDepthShader;
@@ -639,37 +658,54 @@ typedef struct {
 
 } BE_Engine;
 
+extern BE_Engine* g_engine;
+
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 BE_Engine BE_EngineStart(int width, int height, const char* name);
 void BE_EngineClose(BE_Engine* engine);
+void BE_BindEngine(BE_Engine* engine);
+void BE_UnbindEngine();
 
 // OTHER FUNCTIONS
 
-void BE_SceneNew(BE_Engine* engine, const char* name);
+void BE_SceneNew(const char* name);
 
-void BE_LoadTexture(BE_Engine* engine, const char* name, const char* imageFile, const char* texType, GLenum slot);
-void BE_LoadMesh(BE_Engine* engine, const char* name, const char* objPath);
-void BE_LoadSound(BE_Engine* engine, const char* name, const char* path, bool spatial, float min, float max);
-void BE_LoadShader(BE_Engine* engine, const char* name, const char* vertexFile, const char* fragmentFile, const char* geometryFile, const char* computeFile);
+void BE_LoadTexture(const char* name, const char* imageFile, const char* texType, GLenum slot);
+void BE_LoadMesh(const char* name, const char* objPath);
+void BE_LoadSound(const char* name, const char* path, bool spatial, float min, float max);
+void BE_LoadShader(const char* name, const char* vertexFile, const char* fragmentFile, const char* geometryFile, const char* computeFile);
 
-void BE_SceneAddModel(BE_Engine* engine, const char* name, const char* meshName, vec3 position, vec3 rotation, vec3 scale);
-void BE_SceneAddLight(BE_Engine* engine, const char* name, int type, vec3 position, vec3 direction, vec4 color, float specular, float a, float b, float innerCone, float outerCone);
-void BE_SceneAddCamera(BE_Engine* engine, const char* name, vec3 position, vec3 direction, int width, int height, float fov, float nearPlane, float farPlane);
-void BE_SceneAddSprite(BE_Engine* engine, const char* name, const char* textureName, vec3 position, vec2 scale, vec3 color, float rotation);
-void BE_SceneAddSource(BE_Engine* engine, const char* name, vec3 position, bool spatial);
+void BE_SceneAddModel(const char* name, const char* meshName, vec3 position, vec3 rotation, vec3 scale);
+void BE_SceneAddLight(const char* name, int type, vec3 position, vec3 direction, vec4 color, float specular, float a, float b, float innerCone, float outerCone);
+void BE_SceneAddCamera(const char* name, vec3 position, vec3 direction, int width, int height, float fov, float nearPlane, float farPlane);
+void BE_SceneAddSprite(const char* name, const char* textureName, vec3 position, vec2 scale, vec3 color, float rotation);
+void BE_SceneAddSource(const char* name, vec3 position, bool spatial);
 
-void BE_BeginFrame(BE_Engine* engine);
-void BE_MakeShadows(BE_Engine* engine, bool active);
-void BE_BeginRender(BE_Engine* engine);
-void BE_DrawModels(BE_Engine* engine, const char* shaderName);
-void BE_DrawLights(BE_Engine* engine, const char* shaderName);
-void BE_DrawCameras(BE_Engine* engine, const char* shaderName);
-void BE_DrawSprites(BE_Engine* engine, const char* shaderName);
-void BE_DrawSources(BE_Engine* engine, const char* shaderName);
-void BE_DrawScene(BE_Engine* engine, bool editor);
-void BE_EndFrame(BE_Engine* engine);
+void BE_BeginFrame();
+void BE_MakeShadows(bool active);
+void BE_BeginRender();
+void BE_DrawModels(const char* shaderName);
+void BE_DrawLights(const char* shaderName);
+void BE_DrawCameras(const char* shaderName);
+void BE_DrawSprites(const char* shaderName);
+void BE_DrawSources(const char* shaderName);
+void BE_DrawScene(bool editor);
+void BE_EndFrame();
 
-void BE_ScenePlaySound(BE_Engine* engine, const char* sourceName, const char* soundName);
+void BE_PlaySound(const char* sourceName, const char* soundName);
+void BE_StopSound(const char* sourceName);
+void BE_PauseSound(const char* sourceName, bool pause);
+void BE_SetSoundLooping(const char* sourceName, bool looping);
+void BE_PauseSound(const char* sourceName, bool pause);
+void BE_SetSoundLooping(const char* sourceName, bool looping);
+void BE_SetSoundSeek(const char* sourceName, float seconds);
+float BE_GetSoundSeek(const char* sourceName);
+void BE_SetSoundPosition(const char* sourceName, vec3 position);
+void BE_SetListenerPosition(vec3 position, vec3 direction, vec3 velocity);
+void BE_SetSoundVolume(const char* sourceName, float volume);
+void BE_SetSoundPitch(const char* sourceName, float pitch);
+void BE_SetSoundReverb(const char* sourceName, float decay, float mix);
+void BE_RemoveSoundReverb(const char* sourceName);
 
 
 #endif
