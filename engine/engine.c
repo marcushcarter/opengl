@@ -1,5 +1,5 @@
 #include "engine/engine_internal.h"
-#include "engine/engine_api.h"
+#include "engine/engine_default.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -224,7 +224,7 @@ void BE_VertexVectorCopy(BE_Vertex* vertices, size_t count, BE_VertexVector* out
 
 BE_VAO BE_VAOInit(const char* name) {
     BE_VAO vao;
-    vao.name = strdup(name ? name : "");
+    vao.name = strdup(name ? name : "new vao");
     glGenVertexArrays(1, &vao.ID);
     return vao;
 }
@@ -497,7 +497,7 @@ void BE_ShaderGetCompileErrors(unsigned int shader, const char* type) {
 BE_Shader BE_ShaderInit(const char* name, const char* vertexFile, const char* fragmentFile, const char* geometryFile, const char* computeFile) {
     BE_Shader shader = {0};
     
-    shader.name = strdup(name ? name : "");
+    shader.name = strdup(name ? name : "new shader");
     
     const char* vertexSource = NULL;
     const char* fragmentSource = NULL;
@@ -565,7 +565,7 @@ BE_Shader BE_ShaderInit(const char* name, const char* vertexFile, const char* fr
 BE_Shader BE_ShaderInitString(const char* name, const char* vertexSource, const char* fragmentSource, const char* geometrySource, const char* computeSource) {
     BE_Shader shader = {0};
     
-    shader.name = strdup(name ? name : "");
+    shader.name = strdup(name ? name : "new shader");
     
     GLuint vertexShader = 0;
     if (vertexSource) {
@@ -772,7 +772,7 @@ void BE_FBODelete(BE_FBO* fb) {
 BE_Texture BE_TextureInit(const char* name, const char* imageFile, const char* texType, GLuint slot) {
     BE_Texture texture;
     
-    texture.name = strdup(name ? name : "");
+    texture.name = strdup(name ? name : "new texture");
 
     texture.type = (char*)malloc(strlen(texType) + 1);
     if (!texture.type) {
@@ -875,7 +875,7 @@ void BE_TextureVectorCopy(BE_Texture* textures, size_t count, BE_TextureVector* 
 BE_Camera BE_CameraInit(const char* name, int width, int height, float fov, float nearPlane, float farPlane, vec3 position, vec3 direction) {
     BE_Camera camera;
     
-    camera.name = strdup(name ? name : "");
+    camera.name = strdup(name ? name : "new camera");
 
     camera.width = width;
     camera.height = height;
@@ -1158,7 +1158,7 @@ void BE_CameraVectorDraw(BE_CameraVector* vec, BE_Mesh* mesh, BE_Shader* shader,
 BE_Mesh BE_MeshInitFromVertex(const char* name, BE_VertexVector vertices, BE_GLuintVector indices, BE_TextureVector textures) {
     BE_Mesh mesh;
     
-    mesh.name = strdup(name ? name : "");
+    mesh.name = strdup(name ? name : "new mesh");
 
     mesh.vertices = vertices;
     mesh.indices = indices;
@@ -1300,7 +1300,7 @@ void BE_ReplacePathSuffix(const char* path, const char* newsuffix, char* dest, i
 BE_Mesh BE_LoadOBJToMesh(const char* name, const char* obj_path) {
     BE_Mesh mesh;
     
-    mesh.name = strdup(name ? name : "");
+    mesh.name = strdup(name ? name : "new mesh");
 
     FILE* file = fopen(obj_path, "r");
     if (!file) {
@@ -1747,8 +1747,9 @@ BE_Transform BE_TransformInit(vec3 position, vec3 rotation, vec3 scale) {
 }
 
 BE_Model BE_ModelInit(const char* name, BE_Mesh* mesh, BE_Transform transform) {
-    BE_Model model;
-    model.name = strdup(name ? name : "");
+    BE_Model model = {0};
+    if (mesh == NULL) return model;
+    model.name = strdup(name ? name : "new model");
     model.mesh = mesh;
     model.transform = transform;
     return model;
@@ -1858,7 +1859,7 @@ BE_Light BE_LightInit(const char* name, int type, vec3 position, vec3 direction,
 
     BE_Light light = {0};
     
-    light.name = strdup(name ? name : "");
+    light.name = strdup(name ? name : "new light");
     
     light.type = type;
     glm_vec4_copy(color, light.color);
@@ -2216,7 +2217,7 @@ void BE_LightVectorDraw(BE_LightVector* vec, BE_Mesh* mesh, BE_Shader* shader) {
 BE_Sprite BE_SpriteInit(const char* name, BE_Texture* texture, vec3 position, vec2 scale, vec3 color, float rotation) {
     BE_Sprite sprite = {0};
     
-    sprite.name = strdup(name ? name : "");
+    sprite.name = strdup(name ? name : "new sprite");
 
     glm_vec3_copy(position, sprite.position);
     glm_vec2_copy(scale, sprite.scale);
@@ -2322,7 +2323,7 @@ BE_Sound BE_SoundLoad(BE_AudioEngine* engine, const char* path, const char* name
         exit(1);
     }
 
-    sound.name = strdup(name ? name : "");
+    sound.name = strdup(name ? name : "new sound");
     sound.path = strdup(path ? path : "");
 
     if (spatial) {
@@ -2373,7 +2374,7 @@ void BE_SoundVectorCopy(BE_Sound* sounds, size_t count, BE_SoundVector* outVec) 
 
 BE_Source BE_SourceInit(const char* name, vec3 position, bool spatial) {
     BE_Source src = {0};
-    src.name = strdup(name ? name : "");
+    src.name = strdup(name ? name : "new source");
     glm_vec3_copy(position, src.position);
     src.gain = 1.f;
     src.pitch = 1.f;
@@ -2577,7 +2578,7 @@ void BE_SourceVectorDraw(BE_SourceVector* vec, BE_Mesh* mesh, BE_Shader* shader)
 
 BE_Scene BE_SceneInit(const char* name) {
     BE_Scene scene;
-    scene.name = strdup(name ? name : "");
+    scene.name = strdup(name ? name : "new scene");
     BE_CameraVectorInit(&scene.cameras);
     BE_LightVectorInit(&scene.lights);
     BE_ModelVectorInit(&scene.models);
@@ -2633,14 +2634,18 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     BE_FBOResize(&engine->FBOs[1], width, height);
 }
 
-BE_Engine BE_EngineStart(int width, int height, const char* name) {
+BE_Engine BE_EngineStart(int width, int height, const char* title) {
     
     BE_Engine engine;
     BE_Engine* p_engine;
     BE_BindEngine(&engine);
     engine.width = width;
     engine.height = height;
-    engine.title = strdup(name);
+    if (title != NULL) {
+        engine.title = strdup(title);
+    } else {
+        engine.title = strdup("Ballistic Engine");
+    }
 
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -2650,7 +2655,7 @@ BE_Engine BE_EngineStart(int width, int height, const char* name) {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    engine.window = glfwCreateWindow(width, height, name, NULL, NULL);
+    engine.window = glfwCreateWindow(engine.width, engine.height, engine.title, NULL, NULL);
     if (!engine.window) {
         printf("Failed to create GLFW window\n");
         glfwTerminate();
@@ -2713,7 +2718,7 @@ BE_Engine BE_EngineStart(int width, int height, const char* name) {
     return engine;
 }
 
-void BE_EngineClose(BE_Engine* engine) {
+void BE_EngineShutdown(BE_Engine* engine) {
     glfwDestroyWindow(engine->window);
     glfwTerminate();
 }
@@ -2731,42 +2736,52 @@ void BE_UnbindEngine() {
 // ==============================
 
 void BE_SceneNew(const char* name) {
+    if (g_engine == NULL) return;
     BE_SceneVectorPush(&g_engine->scenes, BE_SceneInit(name));
 }
 
-void BE_LoadTexture(const char* name, const char* imageFile, const char* texType, GLenum slot) {
-    BE_TextureVectorPush(&g_engine->resources.textures, BE_TextureInit(name, imageFile, texType, slot));
+void BE_LoadTexture(const char* name, const char* imageFile) {
+    if (g_engine == NULL) return;
+    BE_TextureVectorPush(&g_engine->resources.textures, BE_TextureInit(name, imageFile, "texture", 0));
 }
 
 void BE_LoadMesh(const char* name, const char* objPath) {
+    if (g_engine == NULL) return;
     BE_MeshVectorPush(&g_engine->resources.meshes, BE_LoadOBJToMesh(name, objPath));
 }
 
 void BE_LoadSound(const char* name, const char* path, bool spatial, float min, float max) {
+    if (g_engine == NULL) return;
     BE_SoundVectorPush(&g_engine->resources.sounds, BE_SoundLoad(&g_engine->audio, path, name, spatial, min, max));
 }
 
 void BE_LoadShader(const char* name, const char* vertexFile, const char* fragmentFile, const char* geometryFile, const char* computeFile) {
+    if (g_engine == NULL) return;
     BE_ShaderVectorPush(&g_engine->resources.shaders, BE_ShaderInit(name, vertexFile, fragmentFile, geometryFile, computeFile));
 }
 
 void BE_SceneAddModel(const char* name, const char* meshName, vec3 position, vec3 rotation, vec3 scale) {
+    if (g_engine == NULL || meshName == NULL) return;
     BE_ModelVectorPush(&g_engine->activeScene->models, BE_ModelInit(name, BE_FindMeshPtr(&g_engine->resources.meshes, meshName), BE_TransformInit(position, rotation, scale)));
 }
 
 void BE_SceneAddLight(const char* name, int type, vec3 position, vec3 direction, vec4 color, float specular, float a, float b, float innerCone, float outerCone) {
+    if (g_engine == NULL) return;
     BE_LightVectorPush(&g_engine->activeScene->lights, BE_LightInit(name, type, position, direction, color, specular, a, b, innerCone, outerCone));
 }
 
 void BE_SceneAddCamera(const char* name, vec3 position, vec3 direction, int width, int height, float fov, float nearPlane, float farPlane) {
+    if (g_engine == NULL) return;
     BE_CameraVectorPush(&g_engine->activeScene->cameras, BE_CameraInit(name, width, height, fov, nearPlane, farPlane, position, direction));
 }
 
 void BE_SceneAddSprite(const char* name, const char* textureName, vec3 position, vec2 scale, vec3 color, float rotation) {
+    if (g_engine == NULL) return;
     BE_SpriteVectorPush(&g_engine->activeScene->sprites, BE_SpriteInit(name, BE_FindTexturePtr(&g_engine->resources.textures, textureName), position, scale, color, rotation));
 }
 
 void BE_SceneAddSource(const char* name, vec3 position, bool spatial) {
+    if (g_engine == NULL) return;
     BE_SourceVectorPush(&g_engine->activeScene->sources, BE_SourceInit(name, position, spatial));
 }
 
