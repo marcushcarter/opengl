@@ -372,6 +372,7 @@ static inline BE_Mesh* BE_FindMeshPtr(BE_MeshVector* vec, const char* name) {
 typedef struct {
     vec3 position;
     vec3 rotation;
+    versor orientation;
     vec3 scale;
 } BE_Transform;
 
@@ -387,9 +388,11 @@ typedef struct {
     size_t capacity;
 } BE_ModelVector;
 
-BE_Transform BE_TransformInit(vec3 position, vec3 rotation, vec3 scale);
+BE_Transform BE_TransformInit(vec3 position, vec3 eulerRotation, vec3 scale);
+void BE_TransformUpdateMatrix(BE_Transform* transform, mat4 outMatrix);
 
 BE_Model BE_ModelInit(const char* name, BE_Mesh* mesh, BE_Transform transform);
+void BE_ModelRotate(BE_Model* model, vec3 axis, float angle);
 
 void BE_ModelVectorInit(BE_ModelVector* vec);
 void BE_ModelVectorPush(BE_ModelVector* vec, BE_Model value);

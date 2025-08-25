@@ -1759,12 +1759,37 @@ void BE_MeshVectorCopy(BE_Mesh* meshes, size_t count, BE_MeshVector* outVec) {
 // Models
 // ==============================
 
-BE_Transform BE_TransformInit(vec3 position, vec3 rotation, vec3 scale) {
+BE_Transform BE_TransformInit(vec3 position, vec3 eulerRotation, vec3 scale) {
     BE_Transform transform;
     glm_vec3_copy(position, transform.position);
-    glm_vec3_copy(rotation, transform.rotation);
+    // glm_vec3_copy(rotation, transform.rotation);
     glm_vec3_copy(scale, transform.scale);
+
+    versor qPitch, qYaw, qRoll;
+    glm_quatv(qPitch, eulerRotation[0], (vec3){1,0,0});
+    glm_quatv(qYaw,   eulerRotation[1], (vec3){0,1,0});
+    glm_quatv(qRoll,  eulerRotation[2], (vec3){0,0,1});
+
+    glm_quat_mul(qYaw, qPitch, transform.orientation);
+    glm_quat_mul(transform.orientation, qRoll, transform.orientation);
+    glm_quat_normalize(transform.orientation);
+
     return transform;
+}
+
+void BE_TransformUpdateMatrix(BE_Transform* transform, mat4 outMatrix) {
+    mat4 rot;
+    glm_quat_mat4(transform->orientation, rot); // quaternion -> rotation matrix
+
+    mat4 scale;
+    glm_scale_make(scale, transform->scale);
+
+    mat4 trans;
+    glm_translate_make(trans, transform->position);
+
+    // Combine: modelMatrix = Translation * Rotation * Scale
+    glm_mat4_mul(rot, scale, outMatrix);        // rotation * scale
+    glm_mat4_mul(trans, outMatrix, outMatrix);  // translation * (rotation*scale)
 }
 
 BE_Model BE_ModelInit(const char* name, BE_Mesh* mesh, BE_Transform transform) {
@@ -1774,6 +1799,13 @@ BE_Model BE_ModelInit(const char* name, BE_Mesh* mesh, BE_Transform transform) {
     model.mesh = mesh;
     model.transform = transform;
     return model;
+}
+
+void BE_ModelRotate(BE_Model* model, vec3 axis, float angle) {
+    versor q;
+    glm_quatv(q, angle, axis);
+    glm_quat_mul(q, model->transform.orientation, model->transform.orientation);
+    glm_quat_normalize(model->transform.orientation);
 }
 
 #define INITIAL_MODEL_CAPACITY 16
@@ -1820,7 +1852,7 @@ void BE_ModelVectorDraw(BE_ModelVector* vec, BE_Shader* shader) {
     for (size_t i = 0; i < vec->size; i++) {
         BE_Model* model = &vec->data[i];
 
-        BE_MatrixMakeModel(model->transform.position, model->transform.rotation, model->transform.scale, modelMatrix);
+        BE_TransformUpdateMatrix(&model->transform, modelMatrix);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)modelMatrix);
         BE_MeshDraw(model->mesh, shader);
 
@@ -2857,7 +2889,7 @@ void BE_DrawModels(const char* shaderName) {
     mat4 modelMatrix;
     for (size_t i = 0; i < g_engine->activeScene->models.size; i++) {
         BE_Model* model = &g_engine->activeScene->models.data[i];
-        BE_MatrixMakeModel(model->transform.position, model->transform.rotation, model->transform.scale, modelMatrix);
+        BE_TransformUpdateMatrix(&model->transform, modelMatrix);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)modelMatrix);
         BE_MeshDraw(model->mesh, shader);
     }
