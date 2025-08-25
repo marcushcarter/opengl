@@ -31,7 +31,7 @@ int main() {
 
         BE_BeginFrame();
         // BE_SourceSetListener(&engine.audio, engine.activeCamera->position, engine.activeCamera->direction, (vec3){0,0,0});
-        // BE_CameraInputs(engine.activeCamera, engine.window, engine.timer.dt);
+        BE_CameraInputs(engine.activeCamera, engine.window, engine.timer.dt);
 
         glm_vec3_copy((vec3){cosf(glfwGetTime()/25), -0.4f, sinf(glfwGetTime()/25)}, engine.activeScene->lights.data[0].direction);
         glm_vec3_copy((vec3){sin(glfwGetTime()), 0.5f, cos(glfwGetTime())}, engine.activeScene->lights.data[1].position);

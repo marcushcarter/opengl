@@ -43,6 +43,7 @@
 void BE_MatrixMakeModel(vec3 translation, vec3 rotation, vec3 scale, mat4 dest);
 void BE_MatrixMakeBillboard(vec3 position, mat4 view, vec3 scale, mat4 dest);
 void BE_OritentationToEuler(vec3 orientation, vec3 outEuler);
+void BE_VersorToEuler(versor q, vec3 outEuler);
 void BE_Vec3RotateAxis(vec3 in, vec3 axis, float angle_rad, vec3 out);
 
 #define FPS_HISTORY_COUNT 20
@@ -291,7 +292,9 @@ typedef struct {
     int width, height;
     float zoom, fov;
     float nearPlane, farPlane;
-    vec3 position, direction, Up;
+    vec3 position;
+    versor orientation;
+    float yaw, pitch, roll;
     mat4 projPersp, projOrtho;
     mat4 viewMatrix;
 } BE_Camera;
@@ -303,6 +306,7 @@ typedef struct {
 } BE_CameraVector;
 
 BE_Camera BE_CameraInit(const char* name, int width, int height, float fov, float nearPlane, float farPlane, vec3 position, vec3 direction);
+void BE_CameraRotate(BE_Camera* camera, vec3 axis, float angle);
 void BE_CameraInputs(BE_Camera* camera, GLFWwindow* window, float dt);
 void BE_CameraInputsJoystick(BE_Camera* camera, BE_Joystick* joystick, float dt);
 void BE_CameraMatrixUploadPersp(BE_Camera* camera, BE_Shader* shader, const char* uniform);

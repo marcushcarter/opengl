@@ -84,6 +84,32 @@ void BE_OritentationToEuler(vec3 orientation, vec3 outEuler) {
     outEuler[2] = roll;
 }
 
+void BE_VersorToEuler(versor q, vec3 outEuler) {
+    // Normalize quaternion to avoid drift
+    glm_quat_normalize(q);
+
+    float ysqr = q[1] * q[1];
+
+    // pitch (x-axis rotation)
+    float t0 = +2.0f * (q[3] * q[0] - q[1] * q[2]);
+    float t1 = +1.0f - 2.0f * (q[0] * q[0] + ysqr);
+    float pitch = atan2f(t0, t1);
+
+    // yaw (y-axis rotation)
+    float t2 = +2.0f * (q[3] * q[1] + q[2] * q[0]);
+    t2 = fmaxf(fminf(t2, 1.0f), -1.0f);
+    float yaw = asinf(t2);
+
+    // roll (z-axis rotation)
+    float t3 = +2.0f * (q[3] * q[2] - q[0] * q[1]);
+    float t4 = +1.0f - 2.0f * (ysqr + q[2] * q[2]);
+    float roll = atan2f(t3, t4);
+
+    outEuler[0] = pitch;
+    outEuler[1] = yaw;
+    outEuler[2] = roll;
+}
+
 void BE_Vec3RotateAxis(vec3 in, vec3 axis, float angle_rad, vec3 out) {
     vec3 axis_n;
     glm_vec3_normalize_to(axis, axis_n);
@@ -874,17 +900,16 @@ void BE_TextureVectorCopy(BE_Texture* textures, size_t count, BE_TextureVector* 
 
 BE_Camera BE_CameraInit(const char* name, int width, int height, float fov, float nearPlane, float farPlane, vec3 position, vec3 direction) {
     BE_Camera camera;
-    
     camera.name = strdup(name ? name : "new camera");
-
     camera.width = width;
     camera.height = height;
     glm_vec3_copy(position, camera.position);
-    glm_vec3_copy(direction, camera.direction);
 
-    vec3 up = { 0.0f, 1.0f, 0.0f };
-
-    glm_vec3_copy(up, camera.Up);
+    glm_quat_identity(camera.orientation);
+    vec3 forward = {0,0,-1};
+    vec3 dirNorm;
+    glm_vec3_normalize_to(direction, dirNorm);
+    glm_quat_from_vecs(forward, dirNorm, camera.orientation);
 
     camera.zoom = 1.0f;
     camera.fov = fov;
@@ -900,150 +925,143 @@ BE_Camera BE_CameraInit(const char* name, int width, int height, float fov, floa
     return camera;
 }
 
+void BE_CameraRotate(BE_Camera* camera, vec3 axis, float angle) {
+    versor qrot;
+    glm_quatv(qrot, angle, axis);
+    glm_quat_mul(qrot, camera->orientation, camera->orientation);
+    glm_quat_normalize(camera->orientation);
+}
+
 void BE_CameraInputs(BE_Camera* camera, GLFWwindow* window, float dt) {
 
-    // MOVEMENT VECTORS
-
     float speed = 2.5f;
-    float sensitivity = 3.0f;
-    // if (joystick && joystick->buttons[8]) speed = 5.0f;
+    float sensitivity = 1.5f;
 
-    vec3 v_forward, v_right, v_up, v_move;
-    glm_vec3_zero(v_move);
+    vec3 move = {0}, tmp = {0};
+    vec3 forward = {0,0,0};
+    vec3 right = {0,0,0};
+    vec3 up = {0,0,0};
 
-    glm_vec3_copy(camera->direction, v_forward);
-    v_forward[1] = 0.0f;
-    glm_vec3_normalize(v_forward);
+    glm_quat_rotatev(camera->orientation, (vec3){0,0,-1}, forward);
+    glm_quat_rotatev(camera->orientation, (vec3){1,0,0}, right);
+    glm_quat_rotatev(camera->orientation, (vec3){0,1,0}, up);
 
-    glm_vec3_cross(v_forward, (vec3){0.0f, 1.0f, 0.0f}, v_right);
-    glm_vec3_normalize(v_right);
+    vec3 flatForward = {forward[0], 0, forward[2]};
+    if (glm_vec3_norm(flatForward) > 1e-6f)
+        glm_vec3_normalize(flatForward);
 
-    glm_vec3_cross(v_forward, v_right, v_up);
-    glm_vec3_normalize(v_up);
+    vec3 flatRight = {right[0], 0, right[2]};
+    glm_vec3_normalize(flatRight);
     
-    // DIRECTION VECTORS
-
-    vec3 d_up = { 0.0f, 1.0f, 0.0f };
-    vec3 d_right, d_direction;
-
-    glm_vec3_cross(d_up, camera->direction, d_right);
-    glm_vec3_normalize(d_right);
-
-    // MOVEMENT
-
-    vec3 v_vector;
+    vec3 flatUp = {0, up[1], 0};
+    glm_vec3_normalize(flatUp);
 
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-        glm_vec3_scale(v_forward, speed*dt, v_vector);
-        glm_vec3_add(v_move, v_vector, v_move);
+        glm_vec3_scale(flatForward, speed * dt, tmp);
+        glm_vec3_add(move, tmp, move);
     }
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-        glm_vec3_scale(v_forward, -speed*dt, v_vector);
-        glm_vec3_add(v_move, v_vector, v_move);
+        glm_vec3_scale(flatForward, -speed * dt, tmp);
+        glm_vec3_add(move, tmp, move);
     }
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-        glm_vec3_scale(v_right, -speed*dt, v_vector);
-        glm_vec3_add(v_move, v_vector, v_move);
+        glm_vec3_scale(flatRight, -speed * dt, tmp);
+        glm_vec3_add(move, tmp, move);
     }
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-        glm_vec3_scale(v_right, speed*dt, v_vector);
-        glm_vec3_add(v_move, v_vector, v_move);
+        glm_vec3_scale(flatRight, speed * dt, tmp);
+        glm_vec3_add(move, tmp, move);
     }
     if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-        glm_vec3_scale(v_up, -speed*dt, v_vector);
-        glm_vec3_add(v_move, v_vector, v_move);
+        glm_vec3_scale(flatUp, speed * dt, tmp);
+        glm_vec3_add(move, tmp, move);
     }
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-        glm_vec3_scale(v_up, speed*dt, v_vector);
-        glm_vec3_add(v_move, v_vector, v_move);
-    }
-
-    // CAMERA ROTATION
-
-    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
-        BE_Vec3RotateAxis(camera->direction, d_up, dt*sensitivity, d_direction);
-        glm_vec3_normalize_to(d_direction, camera->direction);
-    }
-    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
-        BE_Vec3RotateAxis(camera->direction, d_up, -dt*sensitivity, d_direction);
-        glm_vec3_normalize_to(d_direction, camera->direction);
-    }
-    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
-        BE_Vec3RotateAxis(camera->direction, d_right, -dt*sensitivity, d_direction);
-        glm_vec3_normalize_to(d_direction, camera->direction);
-    }
-    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
-        BE_Vec3RotateAxis(camera->direction, d_right, dt*sensitivity, d_direction);
-        glm_vec3_normalize_to(d_direction, camera->direction);
+        glm_vec3_scale(flatUp, -speed * dt, tmp);
+        glm_vec3_add(move, tmp, move);
     }
         
-    glm_vec3_add(camera->position, v_move, camera->position);
+    glm_vec3_add(camera->position, move, camera->position);
+
+    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)  camera->yaw += dt * sensitivity;
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) camera->yaw -= dt * sensitivity;
+    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)    camera->pitch += dt * sensitivity;
+    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)  camera->pitch -= dt * sensitivity;
+
+    if (camera->pitch > glm_rad(89.9f))  camera->pitch = glm_rad(89.9f);
+    if (camera->pitch < glm_rad(-89.9f)) camera->pitch = glm_rad(-89.9f);
+
+    versor qPitch, qYaw;
+    glm_quatv(qPitch, camera->pitch, (vec3){1,0,0});
+    glm_quatv(qYaw,   camera->yaw,   (vec3){0,1,0});
+    glm_quat_mul(qYaw, qPitch, camera->orientation);
+    glm_quat_normalize(camera->orientation);
 
 }
 
 void BE_CameraInputsJoystick(BE_Camera* camera, BE_Joystick* joystick, float dt) {
 
-    if (joystick->present && joystick != NULL) {
+    // if (joystick->present && joystick != NULL) {
 
-        float speed = 2.5f;
-        float sensitivity = 3.0f;
-        // if (joystick && joystick->buttons[8]) speed = 5.0f;
+    //     float speed = 2.5f;
+    //     float sensitivity = 3.0f;
+    //     // if (joystick && joystick->buttons[8]) speed = 5.0f;
 
-        vec3 v_forward, v_right, v_up, v_move;
-        glm_vec3_zero(v_move);
+    //     vec3 v_forward, v_right, v_up, v_move;
+    //     glm_vec3_zero(v_move);
 
-        glm_vec3_copy(camera->direction, v_forward);
-        v_forward[1] = 0.0f;
-        glm_vec3_normalize(v_forward);
+    //     glm_vec3_copy(camera->direction, v_forward);
+    //     v_forward[1] = 0.0f;
+    //     glm_vec3_normalize(v_forward);
 
-        glm_vec3_cross(v_forward, (vec3){0.0f, 1.0f, 0.0f}, v_right);
-        glm_vec3_normalize(v_right);
+    //     glm_vec3_cross(v_forward, (vec3){0.0f, 1.0f, 0.0f}, v_right);
+    //     glm_vec3_normalize(v_right);
 
-        glm_vec3_cross(v_forward, v_right, v_up);
-        glm_vec3_normalize(v_up);
+    //     glm_vec3_cross(v_forward, v_right, v_up);
+    //     glm_vec3_normalize(v_up);
         
-        // DIRECTION VECTORS
+    //     // DIRECTION VECTORS
 
-        vec3 d_up = { 0.0f, 1.0f, 0.0f };
-        vec3 d_right, d_direction;
+    //     vec3 d_up = { 0.0f, 1.0f, 0.0f };
+    //     vec3 d_right, d_direction;
 
-        glm_vec3_cross(d_up, camera->direction, d_right);
-        glm_vec3_normalize(d_right);
+    //     glm_vec3_cross(d_up, camera->direction, d_right);
+    //     glm_vec3_normalize(d_right);
 
-        // MOVEMENT
+    //     // MOVEMENT
 
-        vec3 v_vector;
+    //     vec3 v_vector;
 
-        if (fabsf(joystick->axes[1]) > joystick->deadzone) {
-            glm_vec3_scale(v_forward, -speed*dt*joystick->axes[1], v_vector);
-            glm_vec3_add(v_move, v_vector, v_move);
-        }
-        if (fabsf(joystick->axes[0]) > joystick->deadzone) {
-            glm_vec3_scale(v_right, speed*dt*joystick->axes[0], v_vector);
-            glm_vec3_add(v_move, v_vector, v_move);
-        }
-        if (joystick->buttons[0] || BE_JoystickIsHeld(joystick, 0)) {
-            glm_vec3_scale(v_up, -speed*dt, v_vector);
-            glm_vec3_add(v_move, v_vector, v_move);
-        }
-        if (joystick->buttons[1] || joystick->buttons[9]) {
-            glm_vec3_scale(v_up, speed*dt, v_vector);
-            glm_vec3_add(v_move, v_vector, v_move);
-        }
+    //     if (fabsf(joystick->axes[1]) > joystick->deadzone) {
+    //         glm_vec3_scale(v_forward, -speed*dt*joystick->axes[1], v_vector);
+    //         glm_vec3_add(v_move, v_vector, v_move);
+    //     }
+    //     if (fabsf(joystick->axes[0]) > joystick->deadzone) {
+    //         glm_vec3_scale(v_right, speed*dt*joystick->axes[0], v_vector);
+    //         glm_vec3_add(v_move, v_vector, v_move);
+    //     }
+    //     if (joystick->buttons[0] || BE_JoystickIsHeld(joystick, 0)) {
+    //         glm_vec3_scale(v_up, -speed*dt, v_vector);
+    //         glm_vec3_add(v_move, v_vector, v_move);
+    //     }
+    //     if (joystick->buttons[1] || joystick->buttons[9]) {
+    //         glm_vec3_scale(v_up, speed*dt, v_vector);
+    //         glm_vec3_add(v_move, v_vector, v_move);
+    //     }
 
-        // CAMERA ROTATION
+    //     // CAMERA ROTATION
 
-        if (fabsf(joystick->axes[2]) > joystick->deadzone) {
-            BE_Vec3RotateAxis(camera->direction, d_up, -dt*sensitivity*joystick->axes[2], d_direction);
-            glm_vec3_normalize_to(d_direction, camera->direction);
-        }
-        if (fabsf(joystick->axes[3]) > joystick->deadzone) {
-            BE_Vec3RotateAxis(camera->direction, d_right, dt*sensitivity*joystick->axes[3], d_direction);
-            glm_vec3_normalize_to(d_direction, camera->direction);
-        }
+    //     if (fabsf(joystick->axes[2]) > joystick->deadzone) {
+    //         BE_Vec3RotateAxis(camera->direction, d_up, -dt*sensitivity*joystick->axes[2], d_direction);
+    //         glm_vec3_normalize_to(d_direction, camera->direction);
+    //     }
+    //     if (fabsf(joystick->axes[3]) > joystick->deadzone) {
+    //         BE_Vec3RotateAxis(camera->direction, d_right, dt*sensitivity*joystick->axes[3], d_direction);
+    //         glm_vec3_normalize_to(d_direction, camera->direction);
+    //     }
         
-        glm_vec3_add(camera->position, v_move, camera->position);
-    }
+    //     glm_vec3_add(camera->position, v_move, camera->position);
+    // }
 
 }
 
@@ -1109,9 +1127,12 @@ void BE_CameraVectorUpdateMatrix(BE_CameraVector* vec, int width, int height) {
         camera->width = width;
         camera->height = height;
 
-        vec3 target;
-        glm_vec3_add(camera->position, camera->direction, target);
-        glm_lookat(camera->position, target, camera->Up, view);
+        vec3 target, forward, up;
+        glm_quat_rotatev(camera->orientation, (vec3){0.0f, 0.0f, -1.0f}, forward);
+        // glm_quat_rotatev(camera->orientation, (vec3){0.0f, 1.0f,  0.0f}, up);
+        glm_vec3_add(camera->position, forward, target);
+        glm_lookat(camera->position, target, (vec3){0,1,0}, view);
+        
         glm_perspective(glm_rad(fov), (float)camera->width / (float)camera->height, camera->nearPlane, camera->farPlane, projection);
         glm_mat4_mul(projection, view, projView);
         glm_mat4_copy(projView, camera->projPersp);
@@ -1132,15 +1153,15 @@ void BE_CameraVectorDraw(BE_CameraVector* vec, BE_Mesh* mesh, BE_Shader* shader,
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glEnable(GL_BLEND);
 
-    mat4 model;
-    vec3 ori;
+    mat4 model = {0};
+    vec3 ori = {0};
 
     for (size_t i = 0; i < vec->size; i++) {
         BE_Camera* camera = &vec->data[i];
 
         if (camera == selected) continue;
         
-        BE_OritentationToEuler(camera->direction, ori);
+        BE_VersorToEuler(camera->orientation, ori);
 
         BE_MatrixMakeModel(camera->position, ori, (vec3){0.25f * camera->width/1000 * camera->fov/45, 0.25f * camera->height/1000, 0.2f * camera->zoom}, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
@@ -2700,8 +2721,7 @@ BE_Engine BE_EngineStart(int width, int height, const char* title) {
     BE_VAOVectorPush(&engine.resources.vaos, BE_VAOInitBillboardQuad("billboard"));
     BE_VAOVectorPush(&engine.resources.vaos, BE_VAOInitQuad("quad"));
 
-    
-    BE_SceneAddCamera("camera1", (vec3){-1.93f, 0.73f, -1.75f}, (vec3){0.67f, -0.12f, 0.73f}, 1, 1, 45.0f, 0.1f, 100.0f);
+    BE_SceneAddCamera("camera1", (vec3){-1.93f, 0.73f, -1.75f}, (vec3){-0.67f, -0.12f, -0.73f}, 1, 1, 45.0f, 0.1f, 100.0f);
     engine.activeCamera = BE_FindCameraPtr(&engine.activeScene->cameras, "camera1");
 
     // DEFAULT RESOURCES
@@ -2925,7 +2945,7 @@ void BE_DrawCameras(const char* shaderName) {
 
         if (camera == g_engine->activeCamera) continue;
         
-        BE_OritentationToEuler(camera->direction, ori);
+        BE_VersorToEuler(camera->orientation, ori);
 
         BE_MatrixMakeModel(camera->position, ori, (vec3){0.25f * camera->width/1000 * camera->fov/45, 0.25f * camera->height/1000, 0.2f * camera->zoom}, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
