@@ -1911,29 +1911,27 @@ void BE_ShadowMapFBODelete(BE_ShadowMapFBO* smfbo) {
 BE_Light BE_LightInit(const char* name, int type, vec3 position, vec3 direction, vec4 color, float specular, float a, float b, float innerCone, float outerCone) {
 
     BE_Light light = {0};
-    
     light.name = strdup(name ? name : "new light");
-    
-    light.type = type;
     glm_vec4_copy(color, light.color);
     light.specular = specular;
+    
+    glm_quat_identity(light.orientation);
+    vec3 forward = {0,0,-1};
 
     switch (type) {
         case LIGHT_DIRECT:
+            glm_quat_from_vecs(forward, direction, light.orientation);
             glm_vec3_copy(direction, light.direction);
             break;
 
         case LIGHT_POINT:
             glm_vec3_copy(position, light.position);
-            light.a = a;
-            light.b = b;
             break;
 
         case LIGHT_SPOT:
+            glm_quat_from_vecs(forward, direction, light.orientation);
             glm_vec3_copy(position, light.position);
             glm_vec3_copy(direction, light.direction);
-            light.innerCone = innerCone;
-            light.outerCone = outerCone;
             break;
         
         default:
@@ -1941,7 +1939,23 @@ BE_Light BE_LightInit(const char* name, int type, vec3 position, vec3 direction,
             break;
     }
 
+    light.type = type;
+    light.a = a;
+    light.b = b;
+    light.innerCone = innerCone;
+    light.outerCone = outerCone;
+
     return light;
+}
+
+void BE_LightRotate(BE_Light* light, vec3 axis, float angle) {
+    versor qrot;
+    glm_quatv(qrot, angle, axis);
+    glm_quat_mul(qrot, light->orientation, light->orientation);
+    glm_quat_normalize(light->orientation);
+
+    vec3 forward = {0,0,-1};
+    glm_quat_rotatev(light->orientation, forward, light->direction);
 }
 
 #define INITIAL_LIGHT_CAPACITY 4
@@ -2425,8 +2439,8 @@ void BE_SoundVectorCopy(BE_Sound* sounds, size_t count, BE_SoundVector* outVec) 
     }
 }
 
-BE_Source BE_SourceInit(const char* name, vec3 position, bool spatial) {
-    BE_Source src = {0};
+BE_Emitter BE_EmitterInit(const char* name, vec3 position, bool spatial) {
+    BE_Emitter src = {0};
     src.name = strdup(name ? name : "new source");
     glm_vec3_copy(position, src.position);
     src.gain = 1.f;
@@ -2438,7 +2452,7 @@ BE_Source BE_SourceInit(const char* name, vec3 position, bool spatial) {
     return src;
 }
 
-void BE_SourcePlaySound(BE_AudioEngine* engine, BE_Source* src, BE_Sound* sound) {
+void BE_EmitterPlaySound(BE_AudioEngine* engine, BE_Emitter* src, BE_Sound* sound) {
     FMOD_CHANNEL* channel = NULL;
     FMOD_System_PlaySound(engine->system, sound->sound, NULL, 0, &channel);
 
@@ -2461,11 +2475,11 @@ void BE_SourcePlaySound(BE_AudioEngine* engine, BE_Source* src, BE_Sound* sound)
     src->channel = channel;
 }
 
-void BE_SourceStop(BE_Source* src){
+void BE_EmitterStop(BE_Emitter* src){
     if(src->channel) FMOD_Channel_Stop(src->channel);
 }
 
-void BE_SourcePause(BE_Source* src, bool pause) {
+void BE_EmitterPause(BE_Emitter* src, bool pause) {
     if (!src) return;
 
     FMOD_BOOL current;
@@ -2477,17 +2491,17 @@ void BE_SourcePause(BE_Source* src, bool pause) {
 
 }
 
-void BE_SourceSetSeek(BE_Source* src, float seconds) {
+void BE_EmitterSetSeek(BE_Emitter* src, float seconds) {
     FMOD_Channel_SetPosition(src->channel, seconds*1000.f, FMOD_TIMEUNIT_MS);
 }
 
-float BE_SourceGetSeek(BE_Source* src) {
+float BE_EmitterGetSeek(BE_Emitter* src) {
     unsigned int posMS = 0;
     FMOD_Channel_GetPosition(src->channel, &posMS, FMOD_TIMEUNIT_MS);
-    return posMS*1000.f;
+    return posMS;
 }
 
-void BE_SourceSetPosition(BE_Source* src, vec3 position){
+void BE_EmitterSetPosition(BE_Emitter* src, vec3 position){
     src->position[0] = position[0];
     src->position[1] = position[1];
     src->position[2] = position[2];
@@ -2498,17 +2512,17 @@ void BE_SourceSetPosition(BE_Source* src, vec3 position){
     }
 }
 
-void BE_SourceSetGain(BE_Source* src, float gain) { 
+void BE_EmitterSetGain(BE_Emitter* src, float gain) { 
     src->gain = gain; 
     if(src->channel) FMOD_Channel_SetVolume(src->channel, gain); 
 }
 
-void BE_SourceSetPitch(BE_Source* src, float pitch) {
+void BE_EmitterSetPitch(BE_Emitter* src, float pitch) {
     src->pitch = pitch;
     if(src->channel) FMOD_Channel_SetPitch(src->channel, pitch);
 }
 
-void BE_SourceSetLooping(BE_Source* src, bool looping) {
+void BE_EmitterSetLooping(BE_Emitter* src, bool looping) {
     src->looping = looping;
     if(src->channel){
         FMOD_MODE mode;
@@ -2518,7 +2532,7 @@ void BE_SourceSetLooping(BE_Source* src, bool looping) {
     }
 }
 
-void BE_SourceSetReverb(BE_Source* src, float decay, float mix) {
+void BE_EmitterSetReverb(BE_Emitter* src, float decay, float mix) {
     if (!src || !src->channel) return;
 
     if (!src->reverbDSP) {
@@ -2538,7 +2552,7 @@ void BE_SourceSetReverb(BE_Source* src, float decay, float mix) {
     FMOD_DSP_SetParameterFloat(src->reverbDSP, FMOD_DSP_SFXREVERB_EARLYLATEMIX, mix);
 }
 
-void BE_SourceRemoveReverb(BE_Source* src) {
+void BE_EmitterRemoveReverb(BE_Emitter* src) {
     if (!src || !src->channel || !src->reverbDSP) return;
     FMOD_Channel_RemoveDSP(src->channel,src->reverbDSP);
     FMOD_DSP_Release(src->reverbDSP);
@@ -2546,7 +2560,7 @@ void BE_SourceRemoveReverb(BE_Source* src) {
 
 }
 
-void BE_SourceSetListener(BE_AudioEngine* engine, vec3 position, vec3 direction, vec3 velocity) {
+void BE_EmitterSetListener(BE_AudioEngine* engine, vec3 position, vec3 direction, vec3 velocity) {
 
     mat4 rot;
     vec3 forward, up;
@@ -2564,7 +2578,6 @@ void BE_SourceSetListener(BE_AudioEngine* engine, vec3 position, vec3 direction,
     up[1] = -rot[1][1];
     up[2] = -rot[1][2];
 
-
     FMOD_VECTOR posv = {position[0], position[1], position[2]};
     FMOD_VECTOR forwardv = {forward[0], forward[1], forward[2]};
     FMOD_VECTOR upv = {up[0], up[1], up[2]};
@@ -2572,37 +2585,74 @@ void BE_SourceSetListener(BE_AudioEngine* engine, vec3 position, vec3 direction,
     FMOD_System_Set3DListenerAttributes(engine->system, 0, &posv, &velv, &forwardv, &upv);
 }
 
+void BE_EmitterSetListenerVersor(BE_AudioEngine* engine, vec3 position, versor orientation, vec3 velocity) {
+    vec3 forward, up;
+    glm_quat_rotatev(orientation, (vec3){0, 0, -1}, forward);
+    glm_quat_rotatev(orientation, (vec3){0, 1, 0}, up);
+
+    FMOD_VECTOR posv = { position[0], position[1], position[2] };
+    FMOD_VECTOR forwardv = { forward[0], forward[1], forward[2] };
+    FMOD_VECTOR upv = { up[0], up[1], up[2] };
+    FMOD_VECTOR velv = { velocity[0], velocity[1], velocity[2] };
+
+    FMOD_System_Set3DListenerAttributes(engine->system, 0, &posv, &velv, &forwardv, &upv);
+}
+
+float BE_EmitterGetVolume(BE_Emitter* src) {
+    return src->gain;
+}
+
+float BE_EmitterGetPitch(BE_Emitter* src) {
+    return src->pitch;
+}
+
+void BE_EmitterGetPosition(BE_Emitter* src, vec3 dest) {
+    glm_vec3_copy(src->position, dest);
+}
+
+bool BE_EmitterGetIsPlaying(BE_Emitter* src) {
+    FMOD_BOOL isPlaying = false;
+    FMOD_Channel_IsPlaying(src->channel, &isPlaying);
+    return isPlaying != 0;
+}
+
+bool BE_EmitterGetIsPaused(BE_Emitter* src) {
+    FMOD_BOOL isPaused = false;
+    FMOD_Channel_GetPaused(src->channel, &isPaused);
+    return isPaused != 0;
+}
+
 #define INITIAL_SOURCE_CAPACITY 8
 
-void BE_SourceVectorInit(BE_SourceVector* vec) {
-    vec->data = (BE_Source*)malloc(sizeof(BE_Source) * INITIAL_SOURCE_CAPACITY);
+void BE_EmitterVectorInit(BE_EmitterVector* vec) {
+    vec->data = (BE_Emitter*)malloc(sizeof(BE_Emitter) * INITIAL_SOURCE_CAPACITY);
     vec->size = 0;
     vec->capacity = INITIAL_SOURCE_CAPACITY;
 }
 
-void BE_SourceVectorPush(BE_SourceVector* vec, BE_Source value) {
+void BE_EmitterVectorPush(BE_EmitterVector* vec, BE_Emitter value) {
     if (vec->size >= vec->capacity) {
         vec->capacity *= 2;
-        vec->data = (BE_Source*)realloc(vec->data, sizeof(BE_Source) * vec->capacity);
+        vec->data = (BE_Emitter*)realloc(vec->data, sizeof(BE_Emitter) * vec->capacity);
     }
     vec->data[vec->size++] = value;
 }
 
-void BE_SourceVectorFree(BE_SourceVector* vec) {
+void BE_EmitterVectorFree(BE_EmitterVector* vec) {
     free(vec->data);
     vec->data = NULL;
     vec->size = 0;
     vec->capacity = 0;
 }
 
-void BE_SourceVectorCopy(BE_Source* sources, size_t count, BE_SourceVector* outVec) {
-    BE_SourceVectorInit(outVec);
+void BE_EmitterVectorCopy(BE_Emitter* emitters, size_t count, BE_EmitterVector* outVec) {
+    BE_EmitterVectorInit(outVec);
     for (size_t i = 0; i < count; i++) {
-        BE_SourceVectorPush(outVec, sources[i]);
+        BE_EmitterVectorPush(outVec, emitters[i]);
     }
 }
 
-void BE_SourceVectorDraw(BE_SourceVector* vec, BE_Mesh* mesh, BE_Shader* shader) {
+void BE_EmitterVectorDraw(BE_EmitterVector* vec, BE_Mesh* mesh, BE_Shader* shader) {
 
     BE_ShaderActivate(shader);
     
@@ -2615,7 +2665,7 @@ void BE_SourceVectorDraw(BE_SourceVector* vec, BE_Mesh* mesh, BE_Shader* shader)
     mat4 model;
 
     for (size_t i = 0; i < vec->size; i++) {
-        BE_Source* source = &vec->data[i];
+        BE_Emitter* source = &vec->data[i];
         
         BE_MatrixMakeModel(source->position, (vec3){0.0f, 0.0f, 0.0f}, scale, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
@@ -2636,7 +2686,7 @@ BE_Scene BE_SceneInit(const char* name) {
     BE_LightVectorInit(&scene.lights);
     BE_ModelVectorInit(&scene.models);
     BE_SpriteVectorInit(&scene.sprites);
-    BE_SourceVectorInit(&scene.sources);
+    BE_EmitterVectorInit(&scene.emitters);
     return scene;
 }
 
@@ -2753,7 +2803,7 @@ BE_Engine BE_EngineStart(int width, int height, const char* title) {
     BE_VAOVectorPush(&engine.resources.vaos, BE_VAOInitBillboardQuad("billboard"));
     BE_VAOVectorPush(&engine.resources.vaos, BE_VAOInitQuad("quad"));
 
-    BE_SceneAddCamera("camera1", (vec3){-1.93f, 0.73f, -1.75f}, (vec3){-0.67f, -0.12f, -0.73f}, 1, 1, 45.0f, 0.1f, 100.0f);
+    BE_SceneAddCamera("camera1", (vec3){-1.93f, 0.73f, -1.75f}, (vec3){0.67f, -0.12f, 0.73f}, 1, 1, 45.0f, 0.1f, 100.0f);
     engine.activeCamera = BE_FindCameraPtr(&engine.activeScene->cameras, "camera1");
 
     // DEFAULT RESOURCES
@@ -2802,11 +2852,6 @@ void BE_LoadMesh(const char* name, const char* objPath) {
     BE_MeshVectorPush(&g_engine->resources.meshes, BE_LoadOBJToMesh(name, objPath));
 }
 
-void BE_LoadSound(const char* name, const char* path, bool spatial, float min, float max) {
-    if (g_engine == NULL) return;
-    BE_SoundVectorPush(&g_engine->resources.sounds, BE_SoundLoad(&g_engine->audio, path, name, spatial, min, max));
-}
-
 void BE_LoadShader(const char* name, const char* vertexFile, const char* fragmentFile, const char* geometryFile, const char* computeFile) {
     if (g_engine == NULL) return;
     BE_ShaderVectorPush(&g_engine->resources.shaders, BE_ShaderInit(name, vertexFile, fragmentFile, geometryFile, computeFile));
@@ -2832,13 +2877,8 @@ void BE_SceneAddSprite(const char* name, const char* textureName, vec3 position,
     BE_SpriteVectorPush(&g_engine->activeScene->sprites, BE_SpriteInit(name, BE_FindTexturePtr(&g_engine->resources.textures, textureName), position, scale, color, rotation));
 }
 
-void BE_SceneAddSource(const char* name, vec3 position, bool spatial) {
-    if (g_engine == NULL) return;
-    BE_SourceVectorPush(&g_engine->activeScene->sources, BE_SourceInit(name, position, spatial));
-}
-
 // ==============================
-// Scene Drawing
+// Begins
 // ==============================
 
 void BE_BeginFrame() {
@@ -2849,6 +2889,7 @@ void BE_BeginFrame() {
 
     glfwPollEvents();
     BE_AudioEngineUpdate(&g_engine->audio);
+    BE_SetListenerPositionToActiveCamera();
 }
 
 void BE_MakeShadows(bool active) {
@@ -2862,6 +2903,14 @@ void BE_BeginRender() {
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
+
+void BE_EndFrame() {
+    glfwSwapBuffers(g_engine->window);
+}
+
+// ==============================
+// Scene Drawing
+// ==============================
 
 void BE_DrawModels(const char* shaderName) {
 
@@ -3029,7 +3078,33 @@ void BE_DrawSprites(const char* shaderName) {
     }
 }
 
-void BE_DrawSources(const char* shaderName) {
+void BE_DrawScene(bool editor) {
+    
+    BE_DrawModels( NULL);
+    BE_DrawSprites(NULL);
+
+    if (editor) {
+        BE_DrawLights(NULL);
+        BE_DrawCameras(NULL);
+        BE_DrawEmitters(NULL);
+    }
+}
+
+// ==============================
+// Audio
+// ==============================
+
+void BE_LoadSound(const char* name, const char* path, bool spatial, float min, float max) {
+    if (g_engine == NULL) return;
+    BE_SoundVectorPush(&g_engine->resources.sounds, BE_SoundLoad(&g_engine->audio, path, name, spatial, min, max));
+}
+
+void BE_AddEmitter(const char* name, bool spatial) {
+    if (g_engine == NULL) return;
+    BE_EmitterVectorPush(&g_engine->activeScene->emitters, BE_EmitterInit(name, (vec3){0,0,0}, spatial));
+}
+
+void BE_DrawEmitters(const char* shaderName) {
     
     BE_Shader* shader = {0};
     if (shaderName == NULL) {
@@ -3054,8 +3129,8 @@ void BE_DrawSources(const char* shaderName) {
     glEnable(GL_BLEND);
 
     mat4 model;
-    for (size_t i = 0; i < g_engine->activeScene->sources.size; i++) {
-        BE_Source* source = &g_engine->activeScene->sources.data[i];
+    for (size_t i = 0; i < g_engine->activeScene->emitters.size; i++) {
+        BE_Emitter* source = &g_engine->activeScene->emitters.data[i];
 
         BE_MatrixMakeModel(source->position, (vec3){0,0,0}, (vec3){0.1f,0.1f,0.1f}, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
@@ -3063,73 +3138,94 @@ void BE_DrawSources(const char* shaderName) {
     }
 }
 
-void BE_DrawScene(bool editor) {
-    
-    BE_DrawModels( NULL);
-    BE_DrawSprites(NULL);
-
-    if (editor) {
-        BE_DrawLights(NULL);
-        BE_DrawCameras(NULL);
-        BE_DrawSources(NULL);
-    }
+void BE_PlayEmitter(const char* emitterName, const char* soundName) {
+    BE_EmitterPlaySound(&g_engine->audio, BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), BE_FindSoundPtr(&g_engine->resources.sounds, soundName));
 }
 
-void BE_EndFrame() {
-    glfwSwapBuffers(g_engine->window);
+void BE_StopEmitter(const char* emitterName) {
+    BE_EmitterStop(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
 }
 
-// ==============================
-// Audio
-// ==============================
-
-void BE_PlaySound(const char* sourceName, const char* soundName) {
-    BE_SourcePlaySound(&g_engine->audio, BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), BE_FindSoundPtr(&g_engine->resources.sounds, soundName));
+void BE_PauseEmitter(const char* emitterName, bool pause) {
+    BE_EmitterPause(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), pause);
 }
 
-void BE_StopSound(const char* sourceName) {
-    BE_SourceStop(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName));
+void BE_SetEmitterLooping(const char* emitterName, bool looping) {
+    BE_EmitterSetLooping(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), looping);
 }
 
-void BE_PauseSound(const char* sourceName, bool pause) {
-    BE_SourcePause(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), pause);
+void BE_SetEmitterSeek(const char* emitterName, float seconds) {
+    BE_EmitterSetSeek(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), seconds);
 }
 
-void BE_SetSoundLooping(const char* sourceName, bool looping) {
-    BE_SourceSetLooping(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), looping);
+void BE_SetEmitterPosition(const char* emitterName, vec3 position) {
+    BE_EmitterSetPosition(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), position);
 }
 
-void BE_SetSoundSeek(const char* sourceName, float seconds) {
-    BE_SourceSetSeek(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), seconds);
-}
-
-float BE_GetSoundSeek(const char* sourceName) {
-    return BE_SourceGetSeek(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName));
-}
-
-void BE_SetSoundPosition(const char* sourceName, vec3 position) {
-    BE_SourceSetPosition(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), position);
+void BE_SetEmitterPositionToCamera(const char* emitterName, const char* cameraName) {
+    BE_Camera* camera = BE_FindCameraPtr(&g_engine->activeScene->cameras, cameraName);
+    BE_EmitterSetPosition(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), camera->position);
 }
 
 void BE_SetListenerPosition(vec3 position, vec3 direction, vec3 velocity) {
     if (!position) glm_vec3_copy((vec3){0,0,0}, position);
     if (!direction) glm_vec3_copy((vec3){0,0,0}, direction);
     if (!velocity) glm_vec3_copy((vec3){0,0,0}, velocity);
-    BE_SourceSetListener(&g_engine->audio, position, direction, velocity);
+    BE_EmitterSetListener(&g_engine->audio, position, direction, velocity);
 }
 
-void BE_SetSoundVolume(const char* sourceName, float volume) {
-    BE_SourceSetGain(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), volume);
+void BE_SetListenerPositionToCamera(const char* cameraName) {
+    BE_Camera* camera = BE_FindCameraPtr(&g_engine->activeScene->cameras, cameraName);
+    BE_EmitterSetListenerVersor(&g_engine->audio, camera->position, camera->orientation, (vec3){0,0,0});
 }
 
-void BE_SetSoundPitch(const char* sourceName, float pitch) {
-    BE_SourceSetPitch(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), pitch);
+void BE_SetListenerPositionToActiveCamera() {
+    BE_EmitterSetListenerVersor(&g_engine->audio, g_engine->activeCamera->position, g_engine->activeCamera->orientation, (vec3){0,0,0});
 }
 
-void BE_SetSoundReverb(const char* sourceName, float decay, float mix) {
-    BE_SourceSetReverb(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName), decay, mix);
+void BE_SetEmitterVolume(const char* emitterName, float volume) {
+    BE_EmitterSetGain(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), volume);
 }
 
-void BE_RemoveSoundReverb(const char* sourceName) {
-    BE_SourceRemoveReverb(BE_FindSourcePtr(&g_engine->activeScene->sources, sourceName));
+void BE_SetEmitterPitch(const char* emitterName, float pitch) {
+    BE_EmitterSetPitch(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), pitch);
+}
+
+void BE_SetEmitterReverb(const char* emitterName, float decay, float mix) {
+    BE_EmitterSetReverb(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), decay, mix);
+}
+
+void BE_RemoveEmitterReverb(const char* emitterName) {
+    BE_EmitterRemoveReverb(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+}
+
+void BE_StopAllEmitters() {
+    for (int i = 0; i < g_engine->activeScene->emitters.size; i++) {
+        BE_Emitter* emitter = &g_engine->activeScene->emitters.data[i];
+        BE_StopEmitter(emitter->name);
+    }
+}
+
+float BE_GetEmitterVolume(const char* emitterName) {
+    return BE_EmitterGetVolume(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+}
+
+float BE_GetEmitterPitch(const char* emitterName) {
+    return BE_EmitterGetPitch(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+}
+
+float BE_GetEmitterSeek(const char* emitterName) {
+    return BE_EmitterGetSeek(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+}
+
+void BE_GetEmitterPosition(const char* emitterName, vec3 dest) {
+    BE_EmitterGetPosition(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), dest);
+}
+
+bool BE_GetEmitterPlaying(const char* emitterName) {
+    return BE_EmitterGetIsPlaying(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+}
+
+bool BE_GetEmitterPaused(const char* emitterName) {
+    return BE_EmitterGetIsPaused(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
 }
