@@ -1,4 +1,6 @@
 #pragma once
+#ifndef ENGINE_DEFAULT_H
+#define ENGINE_DEFAULT_H
 
 // ==============================
 // Shaders
@@ -302,3 +304,5 @@ static const char* BE_DefaultCameraOBJ =
 "f 4/6/1 5/7/1 6/8/1 7/9/1\n"
 "f 6/5/4 8/3/4 7/10/4\n"
 "f 7/10/5 8/3/5 4/2/5\n";
+
+#endif

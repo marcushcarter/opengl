@@ -1,4 +1,4 @@
-#include "engine/engine_internal.h"
+#include "engine/engine.h"
 #include "engine/engine_default.h"
 
 #include <stdio.h>
@@ -7,10 +7,75 @@
 #include <time.h>
 #include <stdarg.h>
 
-#define MSG_ERROR(file, line, msg, ...)    fprintf(stderr, "%s:%d:\033[31m error:\033[0m " msg "\n", file, line, ##__VA_ARGS__)
+#define LINE_ERROR(file, line, msg, ...)    fprintf(stderr, "%s:%d:\033[31m error:\033[0m " msg "\n", file, line, ##__VA_ARGS__)
 #define MSG_WARNING(file, line, msg, ...)  fprintf(stderr, "%s:%d:\033[35m warning:\033[0m " msg "\n", file, line, ##__VA_ARGS__)
 #define MSG_FATAL(file, line, msg, ...)    do { fprintf(stderr, "%s:%d:\033[91m fatal error:\033[0m " msg "\n", file, line, ##__VA_ARGS__); exit(1); } while (0)
 #define MSG_INFO(file, line, msg, ...)     fprintf(stdout, "%s:%d:\033[37m info:\033[0m " msg "\n", file, line, ##__VA_ARGS__)
+
+#define BE_OInfo(name, msg, ...) fprintf(stderr, "\033[37m[INFO] %s: " msg "\n\033[0m", name, ##__VA_ARGS__)
+#define BE_OWarning(name, msg, ...) fprintf(stderr, "\033[35m[WARNING] %s: " msg "\n\033[0m", name, ##__VA_ARGS__)
+#define BE_OError(name, msg, ...) fprintf(stderr, "\033[31m[ERROR] %s: " msg "\n\033[0m", name, ##__VA_ARGS__)
+#define BE_OFatal(name, msg, ...) do { fprintf(stderr, "\033[91m[FATAL ERROR] %s: " msg "\n\033[0m", name, ##__VA_ARGS__); exit(1); } while (0)
+
+#define BE_LInfo(path, line, msg, ...) fprintf(stderr, "\033[37m[INFO] %s:%d: " msg "\n\033[0m", path, line, ##__VA_ARGS__)
+#define BE_LWarning(path, line, msg, ...) fprintf(stderr, "\033[35m[WARNING] %s:%d: " msg "\n\033[0m", path, line, ##__VA_ARGS__)
+#define BE_LError(path, line, msg, ...) fprintf(stderr, "\033[31m[ERROR] %s:%d: " msg "\n\033[0m", path, line, ##__VA_ARGS__)
+#define BE_LFatal(path, line, msg, ...) do { fprintf(stderr, "\033[91m[FATAL ERROR] %s:%d: " msg "\n\033[0m", path, line, ##__VA_ARGS__); exit(1); } while (0)
+
+void BE_MessageImpl(int severity, const char* module, const char* file, int line, const char* fmt, ...) {
+    static char last_msg[1024] = "";
+    static int repeat_count = 0;
+
+    char formatted[512];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(formatted, sizeof(formatted), fmt, args);
+    va_end(args);
+
+    const char* color_code;
+    const char* label;
+    switch (severity) {
+        case 0:     color_code = "\033[37m"; label = "[INFO]"; break;
+        case 1:     color_code = "\033[35m"; label = "[WARNING]"; break;
+        case 2:     color_code = "\033[31m"; label = "[ERROR]"; break;
+        case 3:     color_code = "\033[91m"; label = "[FATAL]"; break;
+        default:    color_code = "\033[37m"; label = "[INFO]"; break;
+    }
+
+    char full_msg[1024];
+    // snprintf(full_msg, sizeof(full_msg), "%s%s\033[0m%s %s: %s", color_code, label, line_str, module, formatted);
+    snprintf(full_msg, sizeof(full_msg), "%s%s\033[0m %s:%d -> %s: %s", color_code, label, file, line, module, formatted);
+
+    if (strcmp(last_msg, full_msg) == 0) {
+        repeat_count++;
+        printf("\r%s (x%d)\033[0m", full_msg, repeat_count + 1);
+        fflush(stdout);
+    } else {
+        if (repeat_count > 0) printf("\n");
+        strcpy(last_msg, full_msg);
+        repeat_count = 0;
+        fprintf(stderr, "%s\033[0m\n", full_msg);
+    }
+
+    if (severity >= 3) exit(1);
+}
+
+#define BE_Message(severity, module, fmt, ...) BE_MessageImpl(severity, module, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+
+#define BE_CheckEngineActive(file, line, _return) do { \
+    if (!g_engine) { BE_MessageImpl(2, "Engine", file, line, "no engine is currently bound."); return _return; } \
+} while (0)
+
+#define BE_CheckSceneActive(file, line, _return) do { \
+    if (!g_engine) { BE_MessageImpl(2, "Engine", file, line, "no engine is currently bound."); return _return; } \
+    if (!g_engine->activeScene) { BE_MessageImpl(2, "Engine", file, line, "no scene is currently bound."); return _return; } \
+} while (0)
+
+#define BE_CheckCameraActive(file, line, _return) do { \
+    if (!g_engine) { BE_MessageImpl(2, "Engine", file, line, "no engine is currently bound."); return _return; } \
+    if (!g_engine->activeScene) { BE_MessageImpl(2, "Engine", file, line, "no scene is currently bound."); return _return; } \
+    if (!g_engine->activeCamera) { BE_MessageImpl(2, "Engine", file, line, "no camera is currently bound."); return _return; } \
+} while (0)
 
 // ==============================
 // MATH
@@ -24,7 +89,7 @@
     printf("[ %8.3f %8.3f %8.3f %8.3f ]\n", (m)[0][3], (m)[1][3], (m)[2][3], (m)[3][3]); \
 } while(0)
 
-void BE_MatrixMakeModel(vec3 translation, vec3 rotation, vec3 scale, mat4 dest) {
+void BE_MakeModelMatrix(vec3 translation, vec3 rotation, vec3 scale, mat4 dest) {
     mat4 trans, rotX, rotY, rotZ, rot, scl;
 
     glm_translate_make(trans, translation);
@@ -135,6 +200,7 @@ void BE_Vec3RotateAxis(vec3 in, vec3 axis, float angle_rad, vec3 out) {
 // ==============================
 
 float BE_UpdateFrameTimeInfo(BE_FrameStats* info) {
+
     info->currentTime = clock();
     info->dt = (float)(info->currentTime - info->previousTime) / CLOCKS_PER_SEC;
     info->previousTime = info->currentTime;
@@ -811,7 +877,7 @@ BE_Texture BE_TextureInit(const char* name, const char* imageFile, const char* t
     stbi_set_flip_vertically_on_load(true);
     unsigned char* bytes = stbi_load(imageFile, &widthImg, &heightImg, &numColCh, 0);
     if (!bytes) {
-        MSG_ERROR(imageFile, 1, "failed to load texture: '%s", stbi_failure_reason());
+        LINE_ERROR(imageFile, 1, "failed to load texture: '%s", stbi_failure_reason());
         exit(1);
     }
 
@@ -830,7 +896,7 @@ BE_Texture BE_TextureInit(const char* name, const char* imageFile, const char* t
     else if (numColCh == 3) format = GL_RGB;
     else if (numColCh == 1) format = GL_RED;
     else {
-        MSG_ERROR(imageFile, 1, "unsupported color channel count '%d", numColCh);
+        LINE_ERROR(imageFile, 1, "unsupported color channel count '%d", numColCh);
         stbi_image_free(bytes);
         exit(1);
     }
@@ -1163,7 +1229,7 @@ void BE_CameraVectorDraw(BE_CameraVector* vec, BE_Mesh* mesh, BE_Shader* shader,
         
         BE_VersorToEuler(camera->orientation, ori);
 
-        BE_MatrixMakeModel(camera->position, ori, (vec3){0.25f * camera->width/1000 * camera->fov/45, 0.25f * camera->height/1000, 0.2f * camera->zoom}, model);
+        BE_MakeModelMatrix(camera->position, ori, (vec3){0.25f * camera->width/1000 * camera->fov/45, 0.25f * camera->height/1000, 0.2f * camera->zoom}, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
         BE_MeshDraw(mesh, shader);
 
@@ -1325,7 +1391,7 @@ BE_Mesh BE_LoadOBJToMesh(const char* name, const char* obj_path) {
 
     FILE* file = fopen(obj_path, "r");
     if (!file) {
-        MSG_ERROR(obj_path, 1, "could not open file");
+        LINE_ERROR(obj_path, 1, "could not open file");
         exit(1);
     }
 
@@ -1395,7 +1461,7 @@ BE_Mesh BE_LoadOBJToMesh(const char* name, const char* obj_path) {
             if (sscanf(line, "v %f %f %f", &v[0], &v[1], &v[2]) == 3) {
                 glm_vec3_copy(v, positions[positionsCount++]);
             } else {
-                MSG_ERROR(obj_path, lineNum, "broken position vertex");
+                LINE_ERROR(obj_path, lineNum, "broken position vertex");
                 continue;
             }
 
@@ -1405,7 +1471,7 @@ BE_Mesh BE_LoadOBJToMesh(const char* name, const char* obj_path) {
             if (sscanf(line, "vt %f %f", &vt[0], &vt[1]) == 2) {
                 glm_vec2_copy(vt, uvs[uvsCount++]);
             } else {
-                MSG_ERROR(obj_path, lineNum, "broken uv vertex");
+                LINE_ERROR(obj_path, lineNum, "broken uv vertex");
                 continue;
             }
 
@@ -1415,7 +1481,7 @@ BE_Mesh BE_LoadOBJToMesh(const char* name, const char* obj_path) {
             if (sscanf(line, "vn %f %f %f", &vn[0], &vn[1], &vn[2]) == 3) {
                 glm_vec3_copy(vn, normals[normalsCount++]);
             } else {
-                MSG_ERROR(obj_path, lineNum, "broken normal vertex");
+                LINE_ERROR(obj_path, lineNum, "broken normal vertex");
                 continue;
             }
 
@@ -1465,7 +1531,7 @@ BE_Mesh BE_LoadOBJToMesh(const char* name, const char* obj_path) {
                     glm_vec2_copy((vec2){0.0f,0.0f}, verts[numVerts].texUV);
 
                 } else {
-                    MSG_ERROR(obj_path, lineNum, "broken face vertex '%s'", token);
+                    LINE_ERROR(obj_path, lineNum, "broken face vertex '%s'", token);
                 }
 
                 token = strtok(NULL, " \t\r\n");
@@ -1520,7 +1586,7 @@ BE_Mesh BE_LoadOBJFromString(const char* name, const char* obj_contents) {
     mesh.name = strdup(name ? name : "");
 
     if (!obj_contents) {
-        MSG_ERROR("OBJ_STRING", 1, "no OBJ data provided");
+        LINE_ERROR("OBJ_STRING", 1, "no OBJ data provided");
         exit(1);
     }
 
@@ -1568,21 +1634,21 @@ BE_Mesh BE_LoadOBJFromString(const char* name, const char* obj_contents) {
             if (sscanf(line, "v %f %f %f", &v[0], &v[1], &v[2]) == 3)
                 glm_vec3_copy(v, positions[positionsCount++]);
             else
-                MSG_ERROR("OBJ_STRING", lineNum, "broken position vertex");
+                LINE_ERROR("OBJ_STRING", lineNum, "broken position vertex");
 
         } else if (strncmp(line, "vt ", 3) == 0) {
             vec2 vt;
             if (sscanf(line, "vt %f %f", &vt[0], &vt[1]) == 2)
                 glm_vec2_copy(vt, uvs[uvsCount++]);
             else
-                MSG_ERROR("OBJ_STRING", lineNum, "broken uv vertex");
+                LINE_ERROR("OBJ_STRING", lineNum, "broken uv vertex");
 
         } else if (strncmp(line, "vn ", 3) == 0) {
             vec3 vn;
             if (sscanf(line, "vn %f %f %f", &vn[0], &vn[1], &vn[2]) == 3)
                 glm_vec3_copy(vn, normals[normalsCount++]);
             else
-                MSG_ERROR("OBJ_STRING", lineNum, "broken normal vertex");
+                LINE_ERROR("OBJ_STRING", lineNum, "broken normal vertex");
 
         } else if (strncmp(line, "f ", 2) == 0) {
             int faceVertCount = BE_CountFaceVertices(line);
@@ -1622,7 +1688,7 @@ BE_Mesh BE_LoadOBJFromString(const char* name, const char* obj_contents) {
                     glm_vec2_copy((vec2){0,0}, verts[numVerts].texUV);
 
                 } else {
-                    MSG_ERROR("OBJ_STRING", lineNum, "broken face vertex '%s'", token);
+                    LINE_ERROR("OBJ_STRING", lineNum, "broken face vertex '%s'", token);
                 }
 
                 token = strtok(NULL, " \t\r\n");
@@ -1668,7 +1734,7 @@ const char** BE_LoadMTLTextures(const char* mtl_path, int* outCount) {
 
     FILE* file = fopen(mtl_path, "r");
     if (!file) {
-        MSG_ERROR(mtl_path, 1, "could not open file");
+        LINE_ERROR(mtl_path, 1, "could not open file");
         exit(1);
     }
     
@@ -2256,14 +2322,14 @@ void BE_LightVectorDraw(BE_LightVector* vec, BE_Mesh* mesh, BE_Shader* shader) {
         
         switch (vec->data[i].type) {
             case LIGHT_DIRECT:
-                // BE_MatrixMakeModel((vec3){0.0f, 2.0f, 0.0f}, light->direction, scale, model);
+                // BE_MakeModelMatrix((vec3){0.0f, 2.0f, 0.0f}, light->direction, scale, model);
                 continue;
                 // break;
             case LIGHT_POINT:
-                BE_MatrixMakeModel(light->position, (vec3){0.0f, 0.0f, 0.0f}, scale, model);
+                BE_MakeModelMatrix(light->position, (vec3){0.0f, 0.0f, 0.0f}, scale, model);
                 break;
             case LIGHT_SPOT:
-                BE_MatrixMakeModel(light->position, light->direction, scale, model);
+                BE_MakeModelMatrix(light->position, light->direction, scale, model);
                 break;
             default:
                 continue;
@@ -2386,7 +2452,7 @@ BE_Sound BE_SoundLoad(BE_AudioEngine* engine, const char* path, const char* name
     else mode |= FMOD_2D;
 
     if (FMOD_System_CreateSound(engine->system, path, mode, 0, &sound.sound) != FMOD_OK) {
-        MSG_ERROR(path, 0, "failed to load sound '%s'", name);
+        LINE_ERROR(path, 0, "failed to load sound '%s'", name);
         exit(1);
     }
 
@@ -2491,8 +2557,8 @@ void BE_EmitterPause(BE_Emitter* src, bool pause) {
 
 }
 
-void BE_EmitterSetSeek(BE_Emitter* src, float seconds) {
-    FMOD_Channel_SetPosition(src->channel, seconds*1000.f, FMOD_TIMEUNIT_MS);
+void BE_EmitterSetSeek(BE_Emitter* src, float seek) {
+    FMOD_Channel_SetPosition(src->channel, seek, FMOD_TIMEUNIT_MS);
 }
 
 float BE_EmitterGetSeek(BE_Emitter* src) {
@@ -2667,7 +2733,7 @@ void BE_EmitterVectorDraw(BE_EmitterVector* vec, BE_Mesh* mesh, BE_Shader* shade
     for (size_t i = 0; i < vec->size; i++) {
         BE_Emitter* source = &vec->data[i];
         
-        BE_MatrixMakeModel(source->position, (vec3){0.0f, 0.0f, 0.0f}, scale, model);
+        BE_MakeModelMatrix(source->position, (vec3){0.0f, 0.0f, 0.0f}, scale, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
         glUniform3fv(glGetUniformLocation(shader->ID, "color"), 1, (float*)(vec3){1,1,1});
         BE_MeshDraw(mesh, shader);
@@ -2833,6 +2899,14 @@ void BE_UnbindEngine() {
     g_engine = NULL;
 }
 
+void BE_BindScene(const char* sceneName) {
+    g_engine->activeScene = BE_FindScenePtr(&g_engine->scenes, sceneName);
+}
+
+void BE_UnbindScene() {
+    g_engine->activeScene = NULL;
+}
+
 // ==============================
 // Scene Additions
 // ==============================
@@ -2920,7 +2994,7 @@ void BE_DrawModels(const char* shaderName) {
     } else {
         BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
         if (!shader) {
-            MSG_ERROR(shaderName, 1, "could not find shader");
+            LINE_ERROR(shaderName, 1, "could not find shader");
             shader = &g_engine->resources.default3DShader;
         }
     }
@@ -2952,7 +3026,7 @@ void BE_DrawLights(const char* shaderName) {
     } else {
         BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
         if (!shader) {
-            MSG_ERROR(shaderName, 1, "could not find shader");
+            LINE_ERROR(shaderName, 1, "could not find shader");
             shader = &g_engine->resources.defaultColorShader;
         }
     }
@@ -2974,14 +3048,14 @@ void BE_DrawLights(const char* shaderName) {
         
         switch (light->type) {
             case LIGHT_DIRECT:
-                // BE_MatrixMakeModel((vec3){0.0f, 2.0f, 0.0f}, light->direction, scale, model);
+                // BE_MakeModelMatrix((vec3){0.0f, 2.0f, 0.0f}, light->direction, scale, model);
                 continue;
                 // break;
             case LIGHT_POINT:
-                BE_MatrixMakeModel(light->position, (vec3){0.0f, 0.0f, 0.0f}, scale, model);
+                BE_MakeModelMatrix(light->position, (vec3){0.0f, 0.0f, 0.0f}, scale, model);
                 break;
             case LIGHT_SPOT:
-                BE_MatrixMakeModel(light->position, light->direction, scale, model);
+                BE_MakeModelMatrix(light->position, light->direction, scale, model);
                 break;
             default:
                 continue;
@@ -3002,7 +3076,7 @@ void BE_DrawCameras(const char* shaderName) {
     } else {
         BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
         if (!shader) {
-            MSG_ERROR(shaderName, 1, "could not find shader");
+            LINE_ERROR(shaderName, 1, "could not find shader");
             shader = &g_engine->resources.defaultColorShader;
         }
     }
@@ -3028,7 +3102,7 @@ void BE_DrawCameras(const char* shaderName) {
         
         BE_VersorToEuler(camera->orientation, ori);
 
-        BE_MatrixMakeModel(camera->position, ori, (vec3){0.25f * camera->width/1000 * camera->fov/45, 0.25f * camera->height/1000, 0.2f * camera->zoom}, model);
+        BE_MakeModelMatrix(camera->position, ori, (vec3){0.25f * camera->width/1000 * camera->fov/45, 0.25f * camera->height/1000, 0.2f * camera->zoom}, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
         BE_MeshDraw(&g_engine->resources.defaultCameraMesh, shader);
     }
@@ -3042,7 +3116,7 @@ void BE_DrawSprites(const char* shaderName) {
     } else {
         BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
         if (!shader) {
-            MSG_ERROR(shaderName, 1, "could not find shader");
+            LINE_ERROR(shaderName, 1, "could not find shader");
             shader = &g_engine->resources.defaultSpriteShader;
         }
     }
@@ -3094,25 +3168,31 @@ void BE_DrawScene(bool editor) {
 // Audio
 // ==============================
 
-void BE_LoadSound(const char* name, const char* path, bool spatial, float min, float max) {
-    if (g_engine == NULL) return;
-    BE_SoundVectorPush(&g_engine->resources.sounds, BE_SoundLoad(&g_engine->audio, path, name, spatial, min, max));
+void BE_IMPL_LoadSound(const char* soundName, const char* soundFile, bool spatial, float min, float max, const char* file, int line) {
+    BE_CheckEngineActive(file, line,);
+    if (!soundFile) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find file '%s'.", soundFile); return; }
+    if (min < 0) { BE_MessageImpl(1, "Sound", file, line, "Expected min value greater than 0."); min = 0; }
+    if (max < 0) { BE_MessageImpl(1, "Sound", file, line, "Expected max value greater than 0."); max = 0; }
+    BE_SoundVectorPush(&g_engine->resources.sounds, BE_SoundLoad(&g_engine->audio, soundFile, soundName, spatial, min, max));
 }
 
-void BE_AddEmitter(const char* name, bool spatial) {
-    if (g_engine == NULL) return;
-    BE_EmitterVectorPush(&g_engine->activeScene->emitters, BE_EmitterInit(name, (vec3){0,0,0}, spatial));
+void BE_IMPL_AddEmitter(const char* emitterName, bool spatial, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_EmitterVectorPush(&g_engine->activeScene->emitters, BE_EmitterInit(emitterName, (vec3){0,0,0}, spatial));
 }
 
-void BE_DrawEmitters(const char* shaderName) {
+// void BE_RemoveEmitter();
+
+void BE_IMPL_DrawEmitters(const char* shaderName, const char* file, int line) {
+    BE_CheckCameraActive(file, line,);
     
     BE_Shader* shader = {0};
-    if (shaderName == NULL) {
+    if (!shaderName) {
         shader = &g_engine->resources.defaultColorShader;
     } else {
-        BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
+        shader = BE_FindShaderPtr(&g_engine->resources.shaders, shaderName);
         if (!shader) {
-            MSG_ERROR(shaderName, 1, "could not find shader");
+            BE_MessageImpl(1, "Shader", file, line, "Failed to find shader '%s'. Using default emitter shader.", shaderName);
             shader = &g_engine->resources.defaultColorShader;
         }
     }
@@ -3132,100 +3212,166 @@ void BE_DrawEmitters(const char* shaderName) {
     for (size_t i = 0; i < g_engine->activeScene->emitters.size; i++) {
         BE_Emitter* source = &g_engine->activeScene->emitters.data[i];
 
-        BE_MatrixMakeModel(source->position, (vec3){0,0,0}, (vec3){0.1f,0.1f,0.1f}, model);
+        BE_MakeModelMatrix(source->position, (vec3){0,0,0}, (vec3){0.1f,0.1f,0.1f}, model);
         glUniformMatrix4fv(glGetUniformLocation(shader->ID, "model"), 1, GL_FALSE, (float*)model);
         BE_MeshDraw(&g_engine->resources.defaultCubeMesh, shader);
     }
 }
 
-void BE_PlayEmitter(const char* emitterName, const char* soundName) {
-    BE_EmitterPlaySound(&g_engine->audio, BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), BE_FindSoundPtr(&g_engine->resources.sounds, soundName));
+void BE_IMPL_PlayEmitter(const char* emitterName, const char* soundName, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    BE_Sound* sound = BE_FindSoundPtr(&g_engine->resources.sounds, soundName);
+    if (!sound) { BE_MessageImpl(2, "Sound", file, line, "Failed to find sound '%s'.", soundName); return; }
+    BE_EmitterPlaySound(&g_engine->audio, emitter, sound);
 }
 
-void BE_StopEmitter(const char* emitterName) {
-    BE_EmitterStop(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+void BE_IMPL_StopEmitter(const char* emitterName, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    BE_EmitterStop(emitter);
 }
 
-void BE_PauseEmitter(const char* emitterName, bool pause) {
-    BE_EmitterPause(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), pause);
+void BE_IMPL_PauseEmitter(const char* emitterName, bool pause, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    BE_EmitterPause(emitter, pause);
 }
 
-void BE_SetEmitterLooping(const char* emitterName, bool looping) {
-    BE_EmitterSetLooping(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), looping);
+void BE_IMPL_SetEmitterLooping(const char* emitterName, bool looping, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    BE_EmitterSetLooping(emitter, looping);
 }
 
-void BE_SetEmitterSeek(const char* emitterName, float seconds) {
-    BE_EmitterSetSeek(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), seconds);
+void BE_IMPL_SetEmitterSeek(const char* emitterName, float seek, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    if (seek < 0) { BE_MessageImpl(1, "Emitter", file, line, "Expected seek value greater than 0."); seek = 0; }
+    BE_EmitterSetSeek(emitter, seek);
 }
 
-void BE_SetEmitterPosition(const char* emitterName, vec3 position) {
-    BE_EmitterSetPosition(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), position);
+void BE_IMPL_SetEmitterPosition(const char* emitterName, vec3 position, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    if (!position) glm_vec3_copy((vec3){0,0,0}, position);
+    BE_EmitterSetPosition(emitter, position);
 }
 
-void BE_SetEmitterPositionToCamera(const char* emitterName, const char* cameraName) {
+void BE_IMPL_SetEmitterPositionToCamera(const char* emitterName, const char* cameraName, const char* file, int line) {
+    BE_CheckCameraActive(file, line,);
     BE_Camera* camera = BE_FindCameraPtr(&g_engine->activeScene->cameras, cameraName);
-    BE_EmitterSetPosition(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), camera->position);
+    if (!camera) { BE_MessageImpl(2, "Camera", file, line, "Failed to find camera '%s'.", cameraName); return; }
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    BE_EmitterSetPosition(emitter, camera->position);
 }
 
-void BE_SetListenerPosition(vec3 position, vec3 direction, vec3 velocity) {
+void BE_IMPL_SetListenerPosition(vec3 position, vec3 direction, vec3 velocity, const char* file, int line) {
+    BE_CheckEngineActive(file, line,);
     if (!position) glm_vec3_copy((vec3){0,0,0}, position);
     if (!direction) glm_vec3_copy((vec3){0,0,0}, direction);
     if (!velocity) glm_vec3_copy((vec3){0,0,0}, velocity);
     BE_EmitterSetListener(&g_engine->audio, position, direction, velocity);
 }
 
-void BE_SetListenerPositionToCamera(const char* cameraName) {
+void BE_IMPL_SetListenerPositionToCamera(const char* cameraName, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
     BE_Camera* camera = BE_FindCameraPtr(&g_engine->activeScene->cameras, cameraName);
+    if (!camera) { BE_MessageImpl(2, "Camera", file, line, "Failed to find camera '%s'.", cameraName); return; }
     BE_EmitterSetListenerVersor(&g_engine->audio, camera->position, camera->orientation, (vec3){0,0,0});
 }
 
-void BE_SetListenerPositionToActiveCamera() {
+void BE_IMPL_SetListenerPositionToActiveCamera(const char* file, int line) {
+    BE_CheckCameraActive(file, line,);
     BE_EmitterSetListenerVersor(&g_engine->audio, g_engine->activeCamera->position, g_engine->activeCamera->orientation, (vec3){0,0,0});
 }
 
-void BE_SetEmitterVolume(const char* emitterName, float volume) {
-    BE_EmitterSetGain(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), volume);
+void BE_IMPL_SetEmitterVolume(const char* emitterName, float volume, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    if (volume < 0) { BE_MessageImpl(1, "Emitter", file, line, "Expected volume value greater than 0."); volume = 0; }
+    BE_EmitterSetGain(emitter, volume);
 }
 
-void BE_SetEmitterPitch(const char* emitterName, float pitch) {
-    BE_EmitterSetPitch(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), pitch);
+void BE_IMPL_SetEmitterPitch(const char* emitterName, float pitch, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    if (pitch < 0) { BE_MessageImpl(1, "Emitter", file, line, "Expected pitch value greater than 0."); pitch = 0; }
+    BE_EmitterSetPitch(emitter, pitch);
 }
 
-void BE_SetEmitterReverb(const char* emitterName, float decay, float mix) {
-    BE_EmitterSetReverb(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), decay, mix);
+void BE_IMPL_SetEmitterReverb(const char* emitterName, float decay, float mix, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    if (decay < 0) { BE_MessageImpl(1, "Emitter", file, line, "Expected decay value greater than 0."); decay = 0; }
+    if (mix < 0 || mix > 1) { BE_MessageImpl(2, "Emitter", file, line, "Expected mix value a number between 0 and 1."); return; }
+    BE_EmitterSetReverb(emitter, decay, mix);
 }
 
-void BE_RemoveEmitterReverb(const char* emitterName) {
-    BE_EmitterRemoveReverb(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+void BE_IMPL_RemoveEmitterReverb(const char* emitterName, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    BE_EmitterRemoveReverb(emitter);
 }
 
-void BE_StopAllEmitters() {
+void BE_IMPL_StopAllEmitters(const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
     for (int i = 0; i < g_engine->activeScene->emitters.size; i++) {
         BE_Emitter* emitter = &g_engine->activeScene->emitters.data[i];
         BE_StopEmitter(emitter->name);
     }
 }
 
-float BE_GetEmitterVolume(const char* emitterName) {
+float BE_IMPL_GetEmitterVolume(const char* emitterName, const char* file, int line) {
+    BE_CheckSceneActive(file, line, 0);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return 0; }
     return BE_EmitterGetVolume(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
 }
 
-float BE_GetEmitterPitch(const char* emitterName) {
-    return BE_EmitterGetPitch(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+float BE_IMPL_GetEmitterPitch(const char* emitterName, const char* file, int line) {
+    BE_CheckSceneActive(file, line, 0);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return 0; }
+    return BE_EmitterGetPitch(emitter);
 }
 
-float BE_GetEmitterSeek(const char* emitterName) {
-    return BE_EmitterGetSeek(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+float BE_IMPL_GetEmitterSeek(const char* emitterName, const char* file, int line) {
+    BE_CheckSceneActive(file, line, 0);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return 0; }
+    return BE_EmitterGetSeek(emitter);
 }
 
-void BE_GetEmitterPosition(const char* emitterName, vec3 dest) {
-    BE_EmitterGetPosition(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName), dest);
+void BE_IMPL_GetEmitterPosition(const char* emitterName, vec3 dest, const char* file, int line) {
+    BE_CheckSceneActive(file, line,);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return; }
+    if (!dest) { BE_MessageImpl(2, "Emitter", file, line, "Destination pointer is invalid.", emitterName); return; }
+    BE_EmitterGetPosition(emitter, dest);
 }
 
-bool BE_GetEmitterPlaying(const char* emitterName) {
-    return BE_EmitterGetIsPlaying(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+bool BE_IMPL_GetEmitterPlaying(const char* emitterName, const char* file, int line) {
+    BE_CheckSceneActive(file, line, false);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return false; }
+    return BE_EmitterGetIsPlaying(emitter);
 }
 
-bool BE_GetEmitterPaused(const char* emitterName) {
-    return BE_EmitterGetIsPaused(BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName));
+bool BE_IMPL_GetEmitterPaused(const char* emitterName, const char* file, int line) {
+    BE_CheckSceneActive(file, line, false);
+    BE_Emitter* emitter = BE_FindEmitterPtr(&g_engine->activeScene->emitters, emitterName);
+    if (!emitter) { BE_MessageImpl(2, "Emitter", file, line, "Failed to find emitter '%s'.", emitterName); return false; }
+    return BE_EmitterGetIsPaused(emitter);
 }
